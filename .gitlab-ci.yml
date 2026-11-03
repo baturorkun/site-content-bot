@@ -1,0 +1,116 @@
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^factory-checkpoint\//'
+      when: never
+    # Approving or completing a requirement rewrites that requirement own
+    # file, which matches the factory job changes rule and would restart
+    # work that is already finished. Only the redundant branch pipeline is
+    # dropped: completion waits on the merge request pipeline, so that one
+    # must still run.
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_MESSAGE =~ /^requirement\(RQ-[0-9]+\): (approve|complete)/'
+      when: never
+    # The commits that only keep requirement records (requirement new's
+    # draft reservation and repository links, a cancellation) change no
+    # source: no pipeline, and no skipped one, which [skip ci] would leave.
+    - if: '$CI_COMMIT_MESSAGE =~ /^requirement(\(RQ-[0-9]+\))?: (reserve draft|link repository metadata|cancel)/'
+      when: never
+    # `factory template update` pushes its branch and opens a merge request
+    # at once: the push pipeline would run the same commit as the merge
+    # request pipeline, which is the one the merge request shows.
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^template\//'
+      when: never
+    - when: always
+
+stages:
+  - ai_factory
+
+variables:
+  PNPM_HOME: "$CI_PROJECT_DIR/.pnpm"
+  AIFACTORY_RUNNER_IMAGE: "node:20-bookworm"
+  CODEX_HOME: "/home/gitlab-runner/.codex"
+
+cache:
+  key: "$CI_COMMIT_REF_SLUG"
+  paths:
+    - .pnpm-store/
+    - .pnpm/
+
+ai_factory_requirement_branch:
+  image: "$AIFACTORY_RUNNER_IMAGE"
+  tags:
+    - linux
+  stage: ai_factory
+  resource_group: "ai-factory-$CI_COMMIT_REF_SLUG"
+  variables:
+    GIT_DEPTH: "0"
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^factory\/RQ-[0-9]+$/'
+      changes:
+        - requirements/**/*.md
+        - requirements/**/*.markdown
+        - factory.config.json
+      when: on_success
+    - when: never
+  before_script:
+    - node --version
+    - npm --version
+    - corepack enable
+    - corepack prepare pnpm@9.15.9 --activate
+    - if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; else pnpm install --no-lockfile; fi
+    - echo "aifactory-cli $(pnpm --silent factory -- --version)"
+    - git config user.name "AI Factory"
+    - git config user.email "ai-factory@local"
+  script:
+    - |
+      REQUIREMENT_ID="${CI_COMMIT_BRANCH#factory/}"
+      DECISION="$(pnpm --silent factory -- --project "$CI_PROJECT_DIR" requirement decision "$REQUIREMENT_ID")"
+      case "$DECISION" in
+        run|legacy)
+          MODEL_PROVIDER="$(pnpm --silent factory -- --project "$CI_PROJECT_DIR" model-provider)"
+          if [ "$MODEL_PROVIDER" = "codex-cli" ]; then
+            command -v codex >/dev/null 2>&1 || { echo "codex-cli provider requires Codex CLI in AIFACTORY_RUNNER_IMAGE"; exit 1; }
+            MOUNTED_CODEX_HOME="${CODEX_HOME:-/home/gitlab-runner/.codex}"
+            if [ -n "${CODEX_AUTH_JSON_FILE:-}" ]; then
+              test -r "$CODEX_AUTH_JSON_FILE" || { echo "CODEX_AUTH_JSON_FILE must point to a readable GitLab File variable"; exit 1; }
+              export CODEX_HOME="$CI_PROJECT_DIR/.codex"
+              install -d -m 700 "$CODEX_HOME"
+              install -m 600 "$CODEX_AUTH_JSON_FILE" "$CODEX_HOME/auth.json"
+            else
+              export CODEX_HOME="$MOUNTED_CODEX_HOME"
+              test -r "$CODEX_HOME/auth.json" || { echo "codex-cli provider requires CODEX_AUTH_JSON_FILE or readable $CODEX_HOME/auth.json from the runner mount"; exit 1; }
+            fi
+            codex login status >/dev/null || { echo "Codex CLI authentication is invalid; refresh CODEX_AUTH_JSON_FILE or $CODEX_HOME/auth.json"; exit 1; }
+          fi
+          fresh_args=()
+          if [ "${AIFACTORY_FRESH:-false}" = "true" ]; then fresh_args+=(--fresh); fi
+          pnpm factory -- --project "$CI_PROJECT_DIR" sync-requirement "$REQUIREMENT_ID" --source-ref "$CI_COMMIT_SHA" --push "${fresh_args[@]}"
+          ;;
+        draft)
+          echo "$REQUIREMENT_ID is still draft; AI Factory execution is skipped."
+          ;;
+        handoff|direct)
+          echo "$REQUIREMENT_ID uses $DECISION mode; GitLab AI Factory pipeline execution is skipped."
+          ;;
+        *)
+          echo "Unknown requirement execution decision: $DECISION"
+          exit 1
+          ;;
+      esac
+  artifacts:
+    name: "site-content-bot-ai-factory-$CI_COMMIT_SHORT_SHA"
+    when: always
+    expire_in: 7 days
+    paths:
+      - public/
+      - src/
+      - dist/
+      - runs/
+      - handoffs/
+      - requirements/
+      - constraints/
+      - factory.config.json
+      - package.json
+      - tsconfig.json
+      - tsconfig.build.json
+      - pyproject.toml
+      - tests/

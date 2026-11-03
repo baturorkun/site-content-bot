@@ -1,0 +1,8 @@
+# pnpm installs aifactory-cli the day it is published (RQ-0120): a pnpm that
+# holds versions back a day (minimumReleaseAge) would otherwise refuse the
+# version a template update pins. Every other package keeps the rule.
+packages:
+  - '.'
+
+minimumReleaseAgeExclude:
+  - aifactory-cli

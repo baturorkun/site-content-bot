@@ -1,0 +1,47 @@
+name: ci
+
+# The package's checks on every pull request and every push to main
+# (aifactory npm-package template, RQ-0151): the same checks the publish
+# workflow runs before a release, on each Node version engines allows, so a
+# break shows on the pull request and not on the release tag.
+#
+# The runner: the repository variable AIFACTORY_RUNS_ON (a JSON list of labels,
+# e.g. ["self-hosted"]), else GitHub-hosted ubuntu-latest (RQ-0152).
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ${{ fromJSON(vars.AIFACTORY_RUNS_ON || '["ubuntu-latest"]') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Set up pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.9 --activate
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm pack:check
+      - run: pnpm template:check
