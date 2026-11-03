@@ -1,0 +1,944 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>{{title}}</title>
+  <style>
+    /* The look of the RAG chat on :9090 (aifactory services/rag-web), RQ-0022. */
+    :root {
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color-scheme: dark;
+      --bg: #07100f;
+      --panel: #0b1715;
+      --panel-strong: #0f201d;
+      --line: #203c36;
+      --line-soft: #162d29;
+      --text: #e7f4ef;
+      --muted: #89a69e;
+      --accent: #67e8bd;
+      --accent-strong: #27c995;
+      --amber: #d4a84f;
+      --danger: #ff8f86;
+      --info: #8fc4ff;
+      --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      min-height: 100vh;
+      color: var(--text);
+      background: radial-gradient(circle at 78% 12%, rgba(39, 201, 149, 0.09), transparent 28rem), var(--bg);
+    }
+    button, textarea, input { font: inherit; }
+    button { color: inherit; }
+    a { color: var(--accent); }
+    [hidden] { display: none !important; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+    .app-shell { display: grid; grid-template-columns: 300px minmax(0, 1fr); min-height: 100vh; }
+    .sidebar { position: sticky; top: 0; display: flex; flex-direction: column; height: 100vh; overflow-y: auto; padding: 28px 22px 22px; border-right: 1px solid var(--line-soft); background: rgba(8, 20, 18, 0.94); }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand-mark { display: grid; place-items: center; width: 42px; height: 42px; border: 1px solid #3d7968; border-radius: 12px; color: var(--accent); background: linear-gradient(145deg, #15342d, #0c1c19); font: 700 13px/1 var(--mono); letter-spacing: 0.08em; }
+    .brand strong, .brand span { display: block; }
+    .brand strong { font-size: 15px; letter-spacing: 0.01em; }
+    .brand span { margin-top: 3px; color: var(--muted); font-size: 12px; }
+
+    .sidebar section { margin-top: 32px; }
+    .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .section-heading h2 { margin: 0; font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase; }
+    .text-button { padding: 0; border: 0; color: var(--accent); background: transparent; cursor: pointer; font-size: 12px; }
+    .text-button:hover { color: #a1f4d8; }
+    .text-button:disabled { color: var(--muted); cursor: default; }
+    .section-copy { margin: 10px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+
+    .session-list { display: grid; gap: 6px; max-height: 220px; margin-top: 13px; overflow-y: auto; }
+    .session-row { display: grid; grid-template-columns: minmax(0, 1fr) 30px; align-items: center; border: 1px solid transparent; border-radius: 9px; color: #91aaa2; }
+    .session-row:hover { border-color: var(--line); background: #0d201c; }
+    .session-row.active { border-color: #316454; color: var(--text); background: #112923; }
+    .session-select { display: grid; min-width: 0; padding: 9px 4px 9px 10px; border: 0; color: inherit; text-align: left; background: transparent; cursor: pointer; }
+    .session-title { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+    .session-date { margin-top: 3px; color: #617e75; font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; }
+    .session-delete { display: grid; place-items: center; width: 25px; height: 25px; padding: 0; border: 0; border-radius: 6px; color: #6e8a82; background: transparent; cursor: pointer; font-size: 17px; }
+    .session-delete:hover { color: var(--danger); background: rgba(255, 143, 134, 0.08); }
+
+    .change-list { display: grid; gap: 7px; margin-top: 13px; }
+    .change-row { display: grid; gap: 5px; padding: 10px 11px; border: 1px solid var(--line-soft); border-radius: 10px; background: rgba(6, 15, 13, 0.55); }
+    .change-title { overflow: hidden; font-size: 12px; line-height: 1.4; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+    .change-row.undone .change-title { color: var(--muted); text-decoration: line-through; }
+    .change-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 10.5px; }
+    .change-meta span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .state { display: inline-flex; flex: none; align-items: center; gap: 5px; font-size: 10.5px; }
+    .state::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+    .state.pipeline::before { background: var(--amber); animation: status-pulse 1.2s ease-in-out infinite; }
+    .state.test::before { background: var(--accent); }
+    .state.production::before { background: var(--info); }
+    .state.failed { color: var(--danger); }
+    .state.failed::before { background: var(--danger); }
+    .state.undone::before { background: transparent; box-shadow: inset 0 0 0 1px var(--muted); }
+    @keyframes status-pulse { 50% { opacity: 0.3; } }
+    .change-actions { display: flex; gap: 12px; }
+    .change-actions a { font-size: 11px; text-decoration: none; }
+    .change-actions .text-button { font-size: 11px; }
+    .empty { color: var(--muted); font-size: 12px; }
+    .skeleton { height: 54px; border-radius: 10px; background: linear-gradient(90deg, #10231f, #18302b, #10231f); background-size: 200% 100%; animation: shimmer 1.5s infinite; }
+    @keyframes shimmer { to { background-position: -200% 0; } }
+
+    .sidebar .version-card { display: grid; gap: 7px; margin-top: auto; padding: 13px 14px; border: 1px solid var(--line-soft); border-radius: 11px; background: linear-gradient(145deg, rgba(17, 42, 36, 0.68), rgba(9, 22, 19, 0.68)); }
+    .version-card h2 { margin: 0; color: var(--muted); font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; }
+    .version-facts { display: grid; gap: 4px; margin: 0; }
+    .version-facts div { display: flex; justify-content: space-between; gap: 10px; min-width: 0; }
+    .version-facts dt { color: var(--muted); font-size: 10.5px; }
+    .version-facts dd { overflow: hidden; margin: 0; font: 500 11px/1.35 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+    .version-facts dd b { color: var(--info); font-weight: 600; }
+    .sidebar-footer { display: flex; align-items: center; justify-content: space-between; gap: 9px; padding-top: 16px; color: var(--muted); font-size: 12px; }
+    .who { display: flex; align-items: center; gap: 9px; min-width: 0; }
+    .who span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .health-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--accent-strong); box-shadow: 0 0 0 4px rgba(39, 201, 149, 0.1); }
+
+    .chat-panel { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: 100vh; min-width: 0; }
+    .chat-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 24px clamp(18px, 5vw, 64px) 20px; border-bottom: 1px solid var(--line-soft); }
+    .header-title { display: flex; align-items: center; gap: 14px; min-width: 0; }
+    .eyebrow { margin: 0 0 7px; color: var(--accent); font: 700 10px/1.2 var(--mono); letter-spacing: 0.17em; }
+    .chat-header h1 { margin: 0; font-size: clamp(19px, 2vw, 26px); font-weight: 600; letter-spacing: -0.025em; }
+    .header-side { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+    .pill-link, .secondary-button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 9px; color: #b4c9c2; background: #0c1b18; cursor: pointer; font-size: 12px; text-decoration: none; white-space: nowrap; }
+    .pill-link:hover, .secondary-button:hover { border-color: #3b695c; color: var(--text); }
+    .release { display: inline-flex; align-items: center; gap: 7px; padding: 8px 12px; border: 1px solid var(--line-soft); border-radius: 9px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+    .release b { color: var(--info); font: 600 12px/1 var(--mono); }
+    .release.problem b { color: var(--danger); }
+    .menu-button { display: none; width: 38px; height: 38px; padding: 0; border: 1px solid var(--line); border-radius: 9px; background: #0c1b18; cursor: pointer; font-size: 17px; }
+
+    .messages { overflow-y: auto; padding: 36px clamp(18px, 7vw, 110px); scroll-behavior: smooth; }
+    .welcome-card { max-width: 780px; margin: 4vh auto 0; padding: clamp(24px, 5vw, 46px); border: 1px solid var(--line); border-radius: 20px; background: linear-gradient(145deg, rgba(17, 42, 36, 0.72), rgba(9, 22, 19, 0.72)); box-shadow: 0 30px 80px rgba(0, 0, 0, 0.2); }
+    .welcome-icon { display: grid; place-items: center; width: 44px; height: 44px; margin-bottom: 26px; border: 1px solid #3b7766; border-radius: 50%; color: var(--accent); background: #102c25; font-size: 24px; }
+    .welcome-card h2 { max-width: 600px; margin: 0; font-size: clamp(26px, 4vw, 42px); font-weight: 500; line-height: 1.08; letter-spacing: -0.045em; }
+    .welcome-card > p:not(.eyebrow) { max-width: 630px; margin: 18px 0 28px; color: var(--muted); line-height: 1.65; }
+    .suggestions { display: flex; flex-wrap: wrap; gap: 9px; }
+    .suggestion { padding: 10px 13px; border: 1px solid var(--line); border-radius: 999px; color: #afc7bf; background: #0a1916; cursor: pointer; font-size: 12px; text-align: left; }
+    .suggestion:hover { border-color: #3c7968; color: var(--accent); }
+
+    .message { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 14px; max-width: 880px; margin: 0 auto 28px; }
+    .message-avatar { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 9px; color: var(--muted); background: var(--panel); font: 700 10px/1 var(--mono); }
+    .message.assistant .message-avatar { color: var(--accent); border-color: #326253; background: #102923; }
+    .message-body { min-width: 0; padding-top: 5px; }
+    .message-role { margin-bottom: 8px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; }
+    .message-text { color: #d9e9e4; overflow-wrap: anywhere; line-height: 1.72; font-size: 14px; }
+    .message.user .message-text { color: #f1f8f5; white-space: pre-wrap; }
+    .message.error .message-text { color: var(--danger); white-space: pre-wrap; }
+    .message-text > :first-child { margin-top: 0; }
+    .message-text > :last-child { margin-bottom: 0; }
+    .message-text p, .message-text ul, .message-text ol, .message-text pre { margin: 0 0 12px; }
+    .message-text ul, .message-text ol { padding-left: 22px; }
+    .message-text li { margin: 3px 0; }
+    .message-text code { padding: 1px 5px; border: 1px solid var(--line-soft); border-radius: 5px; background: #0a1816; font: 12.5px/1.5 var(--mono); }
+    .message-text pre { overflow-x: auto; padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: 8px; background: #0a1816; }
+    .message-text pre code { padding: 0; border: 0; background: none; }
+    .message-text .heading { display: block; margin: 16px 0 6px; color: var(--text); font-weight: 600; }
+    .typing { display: flex; gap: 5px; padding-top: 7px; }
+    .typing i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: pulse 1.2s infinite ease-in-out; }
+    .typing i:nth-child(2) { animation-delay: 0.15s; }
+    .typing i:nth-child(3) { animation-delay: 0.3s; }
+    @keyframes pulse { 0%, 80%, 100% { opacity: 0.25; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-3px); } }
+    .typing-note { margin-top: 8px; color: var(--muted); font-size: 12px; }
+
+    .proposal { display: grid; gap: 12px; margin-top: 16px; padding: 14px; border: 1px solid #2a5248; border-radius: 14px; background: linear-gradient(180deg, #11231f, #0c1a17); }
+    .proposal-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .proposal-head strong { font-size: 13px; }
+    .badge { flex: none; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; color: var(--text); background: #1f3a34; }
+    .badge.applied { color: #0b2a21; background: var(--accent); }
+    .edit { display: grid; gap: 8px; padding: 11px 12px; border: 1px solid var(--line-soft); border-radius: 10px; background: rgba(6, 15, 13, 0.55); }
+    .edit-where { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 10px; }
+    .edit-where b { font-size: 12.5px; }
+    .edit-where code { color: var(--muted); font: 11px/1.4 var(--mono); overflow-wrap: anywhere; }
+    .diff { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .diff > div { min-width: 0; padding: 8px 10px; border-radius: 8px; font-size: 13px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .diff .before { background: rgba(255, 143, 134, 0.07); border: 1px solid rgba(255, 143, 134, 0.18); color: #d8c4c2; }
+    .diff .after { background: rgba(103, 232, 189, 0.07); border: 1px solid rgba(103, 232, 189, 0.2); }
+    .diff .label { display: block; margin-bottom: 4px; color: var(--muted); font: 700 9px/1.2 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; }
+    .diff del { color: #ffb3ac; background: rgba(255, 143, 134, 0.22); text-decoration: line-through; border-radius: 3px; }
+    .diff ins { color: #c4fbe6; background: rgba(103, 232, 189, 0.22); text-decoration: none; border-radius: 3px; }
+    .proposal-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+    .primary-button { display: inline-flex; align-items: center; gap: 8px; min-height: 38px; padding: 0 15px; border: 0; border-radius: 10px; color: #061410; background: var(--accent); cursor: pointer; font-weight: 700; font-size: 13px; }
+    .primary-button:hover { background: #91f1d1; }
+    .primary-button:disabled, .secondary-button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .proposal-status { color: var(--muted); font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .proposal-status.error { color: var(--danger); }
+    .proposal-status.info { padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; color: var(--info); background: var(--panel-strong); font-size: 14px; }
+
+    .composer-wrap { padding: 16px clamp(18px, 7vw, 110px) 20px; border-top: 1px solid var(--line-soft); background: rgba(7, 16, 15, 0.94); }
+    .composer { display: flex; align-items: flex-end; gap: 12px; max-width: 880px; margin: 0 auto; padding: 10px 10px 10px 18px; border: 1px solid #2c5148; border-radius: 15px; background: #0d1d1a; box-shadow: 0 14px 38px rgba(0, 0, 0, 0.18); }
+    .composer:focus-within { border-color: #4e9d85; box-shadow: 0 0 0 3px rgba(103, 232, 189, 0.07); }
+    .composer textarea { flex: 1; max-height: 150px; padding: 9px 0 8px; resize: none; border: 0; outline: 0; color: var(--text); background: transparent; line-height: 1.5; }
+    .composer textarea::placeholder { color: #668078; }
+    .send-button { display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 0 16px; border: 0; border-radius: 10px; color: #061410; background: var(--accent); cursor: pointer; font-weight: 700; font-size: 13px; }
+    .send-button:hover { background: #91f1d1; }
+    .send-button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .composer-note { max-width: 880px; margin: 9px auto 0; color: #5f7c74; text-align: center; font-size: 10px; }
+
+    .login-shell { display: grid; place-items: center; min-height: 100vh; padding: 16px; }
+    .login-card { display: grid; gap: 12px; width: min(400px, 100%); margin: 0; }
+    .login-card h2 { font-size: 30px; }
+    .welcome-card.login-card > p:not(.eyebrow) { margin: 0; font-size: 14px; }
+    .login-card .primary-button { justify-content: center; text-decoration: none; }
+    .form-error { min-height: 18px; color: var(--danger); font-size: 12.5px; }
+
+    /* Release to production (RQ-0022): a dialog over the chat. */
+    .release-button { display: inline-flex; align-items: center; gap: 7px; min-height: 0; padding: 8px 13px; font-size: 12px; }
+    dialog.release-dialog { width: min(744px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 0; border: 1px solid #2a5248; border-radius: 16px; color: var(--text); background: linear-gradient(180deg, #11231f, #0c1a17); box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5); }
+    dialog.release-dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
+    .release-inner { display: grid; gap: 14px; padding: 20px; }
+    .release-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .release-head h2 { margin: 0; font-size: 18px; font-weight: 600; }
+    .close-button { width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px; color: var(--muted); background: transparent; cursor: pointer; font-size: 19px; }
+    .close-button:hover { color: var(--text); background: #12302a; }
+    .facts { display: grid; gap: 6px; margin: 0; padding: 11px 12px; border: 1px solid var(--line-soft); border-radius: 10px; background: rgba(6, 15, 13, 0.55); }
+    .facts div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; }
+    .facts dt { color: var(--muted); font-size: 12px; }
+    .facts dd { margin: 0; font: 12px/1.5 var(--mono); overflow-wrap: anywhere; }
+    .release-changes { display: grid; gap: 6px; max-height: 240px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+    .release-changes li { display: flex; justify-content: space-between; gap: 12px; padding: 7px 10px; border-radius: 8px; background: #10221e; font-size: 12.5px; }
+    .release-changes li span:last-child { flex: none; color: var(--muted); font-size: 11px; }
+    .section-label { color: var(--muted); font-size: 10.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+    .release-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+    .release-form label { display: grid; gap: 5px; color: var(--muted); font-size: 11px; }
+    .release-form input { width: 100%; padding: 9px 11px; border: 1px solid #2c5148; border-radius: 9px; outline: 0; color: var(--text); background: #0d1d1a; }
+    .release-form input:focus { border-color: #4e9d85; }
+    .release-form input:invalid { border-color: var(--danger); }
+    .release-form input[readonly] { color: var(--muted); border-color: var(--line-soft); background: transparent; cursor: default; }
+    .note { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+
+    @media (max-width: 860px) {
+      .app-shell { grid-template-columns: 1fr; }
+      .sidebar { position: fixed; z-index: 20; inset: 0 auto 0 0; width: min(320px, 88vw); transform: translateX(-100%); transition: transform 180ms ease; box-shadow: 18px 0 40px rgba(0, 0, 0, 0.45); }
+      .app-shell.sidebar-open .sidebar { transform: none; }
+      .scrim { position: fixed; z-index: 10; inset: 0; background: rgba(0, 0, 0, 0.45); }
+      .menu-button { display: grid; place-items: center; flex: none; }
+      .chat-header { flex-wrap: wrap; align-items: flex-start; padding: 16px; }
+      .header-side { justify-content: flex-start; }
+      .messages, .composer-wrap { padding-left: 16px; padding-right: 16px; }
+      .diff { grid-template-columns: 1fr; }
+      .release-form { grid-template-columns: 1fr; }
+      .composer-note { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div id="login-view" class="login-shell" hidden>
+    <div class="welcome-card login-card">
+      <div class="welcome-icon" aria-hidden="true">✎</div>
+      <p class="eyebrow">{{title}}</p>
+      <h2>Log in</h2>
+      <p>With your GitLab account ({{gitlabHost}}). Members of the {{project}} project with {{access}} access or above can come in.</p>
+      <a id="login-link" class="primary-button" href="/auth/login">Log in with GitLab</a>
+      <div id="login-error" class="form-error" role="alert"></div>
+    </div>
+  </div>
+
+  <div id="app" class="app-shell" hidden>
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true" title="{{name}}">{{mark}}</div>
+        <div>
+          <strong>{{title}}</strong>
+          <span>{{subtitle}}</span>
+        </div>
+      </div>
+
+      <section aria-labelledby="chats-title">
+        <div class="section-heading">
+          <h2 id="chats-title">Chats</h2>
+          <button id="new-chat" class="text-button" type="button">+ New</button>
+        </div>
+        <div id="session-list" class="session-list" aria-live="polite"></div>
+      </section>
+
+      <section aria-labelledby="changes-title">
+        <div class="section-heading">
+          <h2 id="changes-title">Recent changes</h2>
+          <button id="refresh-changes" class="text-button" type="button">Refresh</button>
+        </div>
+        <p class="section-copy">The bot's commits on main and where each one is.</p>
+        <div id="change-list" class="change-list" aria-live="polite">
+          <div class="skeleton"></div>
+          <div class="skeleton"></div>
+        </div>
+      </section>
+
+      <section class="version-card" aria-labelledby="versions-title">
+        <h2 id="versions-title">Versions and model</h2>
+        <dl class="version-facts">
+          <div id="version-main-row" title="Main, what the test site serves: its version under the site's rule and the commit"><dt>Test site (main)</dt><dd id="version-main">…</dd></div>
+          <div title="The GitLab Release production serves"><dt>Production</dt><dd id="version-production">…</dd></div>
+          <div title="The language model that answers"><dt>Model</dt><dd id="llm-model">…</dd></div>
+          <div title="How the bot reaches the model"><dt>Provider</dt><dd id="llm-provider">…</dd></div>
+        </dl>
+      </section>
+
+      <div class="sidebar-footer">
+        <span class="who"><span class="health-dot" aria-hidden="true"></span><span id="who"></span></span>
+        <button id="logout" class="text-button" type="button">Log out</button>
+      </div>
+    </aside>
+    <div id="scrim" class="scrim" hidden></div>
+
+    <main class="chat-panel">
+      <header class="chat-header">
+        <div class="header-title">
+          <button id="menu" class="menu-button" type="button" aria-label="Show chats and changes" aria-controls="sidebar">☰</button>
+          <div>
+            <p class="eyebrow">{{title}}</p>
+            <h1>Read the site, change its texts</h1>
+          </div>
+        </div>
+        <div class="header-side">
+          <a id="test-link" class="pill-link" target="_blank" rel="noopener">Test site ↗</a>
+          <a id="prod-link" class="pill-link" target="_blank" rel="noopener">Production ↗</a>
+          <span id="release" class="release" title="What production serves">Production <b>…</b></span>
+          <button id="release-open" class="primary-button release-button" type="button" hidden>Release…</button>
+        </div>
+      </header>
+
+      <section id="messages" class="messages" aria-live="polite" aria-label="Conversation"></section>
+
+      <div class="composer-wrap">
+        <form id="chat-form" class="composer">
+          <label class="sr-only" for="question">Message</label>
+          <textarea id="question" name="question" rows="1" maxlength="8000" placeholder="Ask about the site or say which text to change…" required></textarea>
+          <button id="send-button" class="send-button" type="submit"><span>Send</span><span aria-hidden="true">↗</span></button>
+        </form>
+        <p class="composer-note">Enter to send · Shift + Enter for a new line · Apply goes to the test site; production changes only with a GitLab Release</p>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="release-dialog" class="release-dialog" aria-labelledby="release-title">
+    <div class="release-inner">
+      <div class="release-head">
+        <h2 id="release-title">Release to production</h2>
+        <button id="release-close" class="close-button" type="button" aria-label="Close">×</button>
+      </div>
+      <div id="release-body" class="release-inner" style="padding: 0"></div>
+    </div>
+  </dialog>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const messages = $('messages');
+    const question = $('question');
+    const sendButton = $('send-button');
+    const MAX_SESSIONS = 50;
+    const MAX_MESSAGES = 100;
+    const SUGGESTIONS = [
+      'Where does “Simics” appear on the site?',
+      'Which texts differ between the test site and production?',
+      'Show me the English hero title.',
+    ];
+    let me = null;
+    let urls = { testUrl: '', prodUrl: '' };
+    let brand = null;
+    let sessions = [];
+    let activeId = null;
+    let busy = false;
+
+    const api = async (method, path, body) => {
+      const response = await fetch(path, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
+      const data = await response.json().catch(() => ({}));
+      if (response.status === 401) { if (me) loginMessage = 'Your session has ended (the bot was restarted); log in again.'; showLogin(); throw new Error(data.error || 'The session has ended; log in again.'); }
+      if (!response.ok) throw new Error(data.error || `The request failed (${response.status}).`);
+      return data;
+    };
+    const el = (tag, className, text) => {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    };
+    const ago = (iso) => {
+      const seconds = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+      if (seconds < 60) return 'just now';
+      if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
+      if (seconds < 86400) return `${Math.floor(seconds / 3600)} h ago`;
+      return new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' }).format(new Date(iso));
+    };
+
+    // ---- Markdown: built as DOM nodes, never as HTML, so a reply cannot inject markup.
+    const inline = (parent, text) => {
+      const pattern = /`([^`]+)`|\*\*([^*]+)\*\*|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
+      let cursor = 0;
+      for (const match of text.matchAll(pattern)) {
+        parent.append(text.slice(cursor, match.index));
+        if (match[1] !== undefined) parent.append(el('code', '', match[1]));
+        else if (match[2] !== undefined) parent.append(el('strong', '', match[2]));
+        else {
+          const link = el('a', '', match[3]);
+          link.href = match[4];
+          link.target = '_blank';
+          link.rel = 'noopener';
+          parent.append(link);
+        }
+        cursor = match.index + match[0].length;
+      }
+      parent.append(text.slice(cursor));
+    };
+    const renderMarkdown = (container, text) => {
+      const lines = String(text).replace(/\r/g, '').split('\n');
+      let list = null;
+      let paragraph = null;
+      const close = () => { list = null; paragraph = null; };
+      for (let index = 0; index < lines.length; index++) {
+        const line = lines[index];
+        if (line.startsWith('```')) {
+          close();
+          const code = [];
+          for (index++; index < lines.length && !lines[index].startsWith('```'); index++) code.push(lines[index]);
+          const pre = el('pre');
+          pre.append(el('code', '', code.join('\n')));
+          container.append(pre);
+          continue;
+        }
+        const bullet = line.match(/^\s*[-*]\s+(.*)$/);
+        const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
+        const heading = line.match(/^#{1,6}\s+(.*)$/);
+        if (!line.trim()) { close(); continue; }
+        if (heading) { close(); const node = el('span', 'heading'); inline(node, heading[1]); container.append(node); continue; }
+        if (bullet || numbered) {
+          const tag = bullet ? 'UL' : 'OL';
+          if (!list || list.tagName !== tag) { list = el(tag.toLowerCase()); container.append(list); }
+          paragraph = null;
+          const item = el('li');
+          inline(item, (bullet || numbered)[1]);
+          list.append(item);
+          continue;
+        }
+        list = null;
+        if (!paragraph) { paragraph = el('p'); container.append(paragraph); } else paragraph.append(el('br'));
+        inline(paragraph, line);
+      }
+    };
+
+    // ---- Word diff (longest common subsequence) for the proposal cards.
+    const wordDiff = (before, after) => {
+      const a = before.split(/(\s+)/).filter(Boolean);
+      const b = after.split(/(\s+)/).filter(Boolean);
+      if (a.length * b.length > 250000) return { a: [[before, true]], b: [[after, true]] };
+      const table = Array.from({ length: a.length + 1 }, () => new Uint16Array(b.length + 1));
+      for (let i = a.length - 1; i >= 0; i--) for (let j = b.length - 1; j >= 0; j--) {
+        table[i][j] = a[i] === b[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
+      }
+      const left = [];
+      const right = [];
+      let i = 0;
+      let j = 0;
+      while (i < a.length || j < b.length) {
+        if (i < a.length && j < b.length && a[i] === b[j]) { left.push([a[i], false]); right.push([b[j], false]); i++; j++; }
+        else if (j < b.length && (i >= a.length || table[i][j + 1] >= table[i + 1][j])) right.push([b[j++], true]);
+        else left.push([a[i++], true]);
+      }
+      return { a: left, b: right };
+    };
+    const diffSide = (className, label, parts, mark) => {
+      const side = el('div', className);
+      side.append(el('span', 'label', label));
+      for (const [text, changed] of parts) side.append(changed && text.trim() ? el(mark, '', text) : document.createTextNode(text));
+      return side;
+    };
+
+    // ---- Chats, kept in this browser per user (like :9090).
+    const storageKey = () => `content-bot-chats-v1:${me?.email ?? ''}`;
+    const loadSessions = () => {
+      try {
+        const stored = JSON.parse(localStorage.getItem(storageKey()) || '[]');
+        return Array.isArray(stored) ? stored.filter((s) => s && typeof s.id === 'string' && Array.isArray(s.messages)).slice(0, MAX_SESSIONS) : [];
+      } catch { return []; }
+    };
+    const saveSessions = () => {
+      try { localStorage.setItem(storageKey(), JSON.stringify(sessions.slice(0, MAX_SESSIONS))); } catch { /* the chat works without storage */ }
+    };
+    const activeSession = () => sessions.find((s) => s.id === activeId) || null;
+    const newId = () => globalThis.crypto?.randomUUID?.() || `chat-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const createSession = () => {
+      const now = new Date().toISOString();
+      const session = { id: newId(), title: 'New chat', createdAt: now, updatedAt: now, messages: [] };
+      sessions.unshift(session);
+      sessions = sessions.slice(0, MAX_SESSIONS);
+      activeId = session.id;
+      saveSessions();
+      renderSessions();
+      renderActive();
+      return session;
+    };
+    const touch = (session) => {
+      session.updatedAt = new Date().toISOString();
+      sessions = [session, ...sessions.filter((s) => s.id !== session.id)];
+      saveSessions();
+      renderSessions();
+    };
+    const renderSessions = () => {
+      const list = $('session-list');
+      list.replaceChildren();
+      for (const session of sessions) {
+        const row = el('div', `session-row${session.id === activeId ? ' active' : ''}`);
+        const select = el('button', 'session-select');
+        select.type = 'button';
+        select.dataset.sessionId = session.id;
+        select.append(el('span', 'session-title', session.title), el('span', 'session-date', new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' }).format(new Date(session.updatedAt))));
+        const remove = el('button', 'session-delete', '×');
+        remove.type = 'button';
+        remove.dataset.deleteSessionId = session.id;
+        remove.setAttribute('aria-label', `Delete ${session.title}`);
+        row.append(select, remove);
+        list.append(row);
+      }
+    };
+    const showWelcome = () => {
+      const card = el('div', 'welcome-card');
+      const icon = el('div', 'welcome-icon', '✎');
+      icon.setAttribute('aria-hidden', 'true');
+      const suggestions = el('div', 'suggestions');
+      for (const text of SUGGESTIONS) {
+        const button = el('button', 'suggestion', text);
+        button.type = 'button';
+        suggestions.append(button);
+      }
+      card.append(icon, el('p', 'eyebrow', 'THE WHOLE SITE, READ-ONLY'), el('h2', '', 'Ask about the site, or say what to change.'),
+        el('p', '', 'The bot reads main, the built test site and the production release. It changes the texts and the text in the drawings; you see every change before it goes to the test site.'),
+        suggestions);
+      messages.replaceChildren(card);
+    };
+    const renderActive = () => {
+      const session = activeSession();
+      messages.replaceChildren();
+      if (!session || !session.messages.length) return showWelcome();
+      for (const message of session.messages) addMessage(message, false);
+      messages.scrollTop = messages.scrollHeight;
+    };
+
+    // ---- Messages.
+    const addMessage = (message, persist = true) => {
+      messages.querySelector('.welcome-card')?.remove();
+      const article = el('article', `message ${message.role}${message.error ? ' error' : ''}`);
+      const avatar = el('div', 'message-avatar', message.role === 'user' ? 'YOU' : 'BC');
+      const body = el('div', 'message-body');
+      const text = el('div', 'message-text');
+      if (message.role === 'assistant' && !message.error) renderMarkdown(text, message.text);
+      else text.textContent = message.text;
+      body.append(el('div', 'message-role', message.role === 'user' ? (me?.name || 'You') : (brand?.title || 'Content Bot')), text);
+      if (message.proposal) body.append(proposalCard(message.proposal));
+      article.append(avatar, body);
+      messages.append(article);
+      messages.scrollTop = messages.scrollHeight;
+      if (persist) {
+        const session = activeSession() || createSession();
+        session.messages.push(message);
+        session.messages = session.messages.slice(-MAX_MESSAGES);
+        if (message.role === 'user' && session.title === 'New chat') session.title = message.text.replace(/\s+/g, ' ').trim().slice(0, 46) || 'New chat';
+        touch(session);
+      }
+      return article;
+    };
+    const saveProposal = () => saveSessions();
+
+    const proposalCard = (proposal) => {
+      const card = el('div', 'proposal');
+      const head = el('div', 'proposal-head');
+      const badge = el('span', 'badge');
+      head.append(el('strong', '', proposal.edits.length === 1 ? 'Proposed change' : `Proposed changes (${proposal.edits.length})`), badge);
+      card.append(head);
+      for (const edit of proposal.edits) {
+        const box = el('div', 'edit');
+        const where = el('div', 'edit-where');
+        where.append(el('b', '', edit.where || 'Text'), el('code', '', edit.file));
+        const parts = wordDiff(edit.old, edit.new);
+        const diff = el('div', 'diff');
+        diff.append(diffSide('before', 'Now', parts.a, 'del'), diffSide('after', 'Becomes', parts.b, 'ins'));
+        box.append(where, diff);
+        card.append(box);
+      }
+      const actions = el('div', 'proposal-actions');
+      const apply = el('button', 'primary-button', 'Apply');
+      const discard = el('button', 'secondary-button', 'Discard');
+      apply.type = discard.type = 'button';
+      const status = el('div', 'proposal-status');
+      actions.append(apply, discard);
+      card.append(actions, status);
+
+      const show = () => {
+        const open = proposal.state === 'open';
+        actions.hidden = !open;
+        badge.textContent = { open: 'Not applied', applied: 'Applied', discarded: 'Discarded', closed: 'Closed' }[proposal.state] || '';
+        badge.className = `badge${proposal.state === 'applied' ? ' applied' : ''}`;
+        if (proposal.state === 'applied' && proposal.sha && !status.textContent) {
+          status.textContent = `Applied as ${proposal.sha.slice(0, 8)}.`;
+          // A commit already seen on the test site (or failed) is not followed again.
+          follow(proposal.sha, status, proposal.deploy, (state) => { proposal.deploy = state; saveProposal(); });
+        }
+      };
+      apply.onclick = async () => {
+        apply.disabled = discard.disabled = true;
+        status.className = 'proposal-status';
+        status.textContent = 'Checking and pushing…';
+        try {
+          const { sha } = await api('POST', '/api/apply', { id: proposal.id });
+          proposal.state = 'applied';
+          proposal.sha = sha;
+          status.textContent = '';
+          saveProposal();
+          show();
+          loadChanges();
+          loadStatus();
+        } catch (error) {
+          status.className = 'proposal-status error';
+          status.textContent = error.message;
+          if (/no such proposal/.test(error.message)) { proposal.state = 'closed'; saveProposal(); show(); }
+        } finally { apply.disabled = discard.disabled = false; }
+      };
+      discard.onclick = async () => {
+        await api('POST', '/api/discard').catch(() => {});
+        proposal.state = 'discarded';
+        saveProposal();
+        show();
+      };
+      show();
+      return card;
+    };
+
+    // Follows a pushed commit to the test site; known: a final state seen before.
+    const follow = async (sha, line, known, done = () => {}) => {
+      for (let i = 0; i < 120; i++) {
+        let state = known;
+        if (!state) {
+          try { state = await api('GET', `/api/deploy?sha=${sha}`); } catch { state = { state: 'unknown' }; }
+          if (state.state === 'deployed' || state.state === 'failed') done(state);
+        }
+        known = undefined;
+        if (state.state === 'deployed') {
+          line.replaceChildren(`${sha.slice(0, 8)} is on the test site: `);
+          const link = el('a', '', urls.testUrl);
+          link.href = urls.testUrl;
+          link.target = '_blank';
+          link.rel = 'noopener';
+          line.append(link);
+          loadChanges();
+          return;
+        }
+        if (state.state === 'failed') { line.className = 'proposal-status error'; line.textContent = `The pipeline of ${sha.slice(0, 8)} failed: ${state.pipeline || ''}`; loadChanges(); return; }
+        if (state.state === 'unknown') { line.textContent = `${sha.slice(0, 8)} is pushed; its pipeline cannot be read.`; return; }
+        line.textContent = state.state === 'waiting' ? `${sha.slice(0, 8)} is pushed; waiting for its pipeline…` : `${sha.slice(0, 8)} is being deployed to the test site…`;
+        await new Promise((resolve) => setTimeout(resolve, 10000));
+      }
+    };
+
+    const typingIndicator = () => {
+      const article = el('article', 'message assistant');
+      const body = el('div', 'message-body');
+      const dots = el('div', 'typing');
+      dots.append(el('i'), el('i'), el('i'));
+      body.append(el('div', 'message-role', brand?.title || 'Content Bot'), dots, el('div', 'typing-note', 'Reading the site… this can take a minute.'));
+      article.append(el('div', 'message-avatar', 'BC'), body);
+      messages.append(article);
+      messages.scrollTop = messages.scrollHeight;
+      return article;
+    };
+    const resize = () => {
+      question.style.height = 'auto';
+      question.style.height = `${Math.min(question.scrollHeight, 150)}px`;
+    };
+
+    const send = async (value) => {
+      const text = value.trim();
+      if (!text || busy) return;
+      busy = true;
+      sendButton.disabled = true;
+      const session = activeSession() || createSession();
+      addMessage({ role: 'user', text });
+      // Switching chats waits for the answer (busy), so it lands in this one.
+      question.value = '';
+      resize();
+      const typing = typingIndicator();
+      try {
+        const answer = await api('POST', '/api/message', { text, chat: session.id });
+        typing.remove();
+        // The server keeps one proposal per login: a new answer closes the open one.
+        let closed = false;
+        for (const s of sessions) for (const m of s.messages) if (m.proposal?.state === 'open') { m.proposal.state = 'closed'; closed = true; }
+        if (closed) { saveSessions(); renderActive(); }
+        const proposal = answer.proposal ? { ...answer.proposal, state: 'open' } : undefined;
+        addMessage({ role: 'assistant', text: answer.reply || '(no reply)', proposal });
+        if (answer.error) addMessage({ role: 'assistant', text: answer.error, error: true });
+      } catch (error) {
+        typing.remove();
+        addMessage({ role: 'assistant', text: error.message, error: true });
+      } finally {
+        busy = false;
+        sendButton.disabled = false;
+        question.focus();
+      }
+    };
+
+    // ---- Recent changes and the production release.
+    const STATE_LABEL = { pipeline: 'In the pipeline', test: 'On the test site', production: 'In production', failed: 'Pipeline failed', undone: 'Undone', unknown: 'Unknown' };
+    const loadChanges = async () => {
+      const list = $('change-list');
+      try {
+        const { changes, undoable } = await api('GET', '/api/changes');
+        list.replaceChildren();
+        if (!changes.length) list.append(el('p', 'empty', 'No changes by the bot yet.'));
+        for (const change of changes) {
+          const row = el('div', `change-row${change.state === 'undone' ? ' undone' : ''}`);
+          const title = change.subject.replace(/^content: /, '');
+          row.append(el('div', 'change-title', change.kind === 'undo' ? `↶ ${title}` : title));
+          row.title = `${change.subject}\n${change.sha.slice(0, 8)}`;
+          const meta = el('div', 'change-meta');
+          meta.append(el('span', '', `${change.author} · ${ago(change.date)}`), el('span', `state ${change.state}`, STATE_LABEL[change.state] || change.state));
+          row.append(meta);
+          const actions = el('div', 'change-actions');
+          if (change.pipeline) {
+            const link = el('a', '', 'Pipeline ↗');
+            link.href = change.pipeline;
+            link.target = '_blank';
+            link.rel = 'noopener';
+            actions.append(link);
+          }
+          if (change.sha === undoable) {
+            const undo = el('button', 'text-button', 'Undo');
+            undo.type = 'button';
+            undo.onclick = () => undoChange(change, undo);
+            actions.append(undo);
+          }
+          if (actions.childElementCount) row.append(actions);
+          list.append(row);
+        }
+      } catch (error) {
+        list.replaceChildren(el('p', 'empty', `The changes cannot be read: ${error.message}`));
+      }
+    };
+    const undoChange = async (change, button) => {
+      if (!confirm(`Undo this change?\n\n${change.subject}`)) return;
+      button.disabled = true;
+      button.textContent = 'Undoing…';
+      try {
+        await api('POST', '/api/undo', { sha: change.sha });
+      } catch (error) {
+        alert(error.message);
+      }
+      loadChanges();
+      loadStatus();
+    };
+    const loadStatus = async () => {
+      const badge = $('release');
+      try {
+        const { production, main } = await api('GET', '/api/status');
+        $('version-main').textContent = main?.version ? `${main.version.version} · ${main.sha.slice(0, 8)}` : (main?.sha ? main.sha.slice(0, 8) : '—');
+        $('version-main').title = main?.version?.requirement ?? '';
+        $('version-production').replaceChildren(...(production?.tag ? [el('b', '', production.tag)] : ['—']));
+        badge.className = 'release';
+        if (production === null) { badge.replaceChildren('Production: no release yet'); return; }
+        if (production.error) {
+          badge.className = 'release problem';
+          badge.replaceChildren('Production ', el('b', '', 'unknown'));
+          badge.title = production.error;
+          return;
+        }
+        badge.title = `Release ${production.tag}, commit ${production.commit.slice(0, 8)}`;
+        badge.replaceChildren('Production ', el('b', '', production.tag), ` · main +${production.ahead}`);
+      } catch (error) {
+        badge.className = 'release problem';
+        badge.replaceChildren('Production ', el('b', '', 'unknown'));
+        badge.title = error.message;
+      }
+    };
+
+    // ---- Release: what the test site serves goes to production as a GitLab Release.
+    const link = (text, href) => {
+      const node = el('a', '', text);
+      node.href = href;
+      node.target = '_blank';
+      node.rel = 'noopener';
+      return node;
+    };
+    const fact = (label, ...value) => {
+      const row = el('div');
+      const dd = el('dd');
+      dd.append(...value);
+      row.append(el('dt', '', label), dd);
+      return row;
+    };
+    const followRelease = async (tag, line) => {
+      for (let i = 0; i < 120; i++) {
+        let state;
+        try { state = await api('GET', `/api/release/state?tag=${encodeURIComponent(tag)}`); } catch { state = { state: 'unknown' }; }
+        if (state.state === 'deployed') { line.className = 'proposal-status'; line.replaceChildren(`${tag} is live on production: `, link(urls.prodUrl, urls.prodUrl)); loadStatus(); loadChanges(); return; }
+        if (state.state === 'failed') { line.className = 'proposal-status error'; line.replaceChildren(`The deploy of ${tag} failed. `, ...(state.pipeline ? [link('Pipeline ↗', state.pipeline)] : [])); return; }
+        if (state.state === 'unknown') { line.textContent = `${tag} is released; its pipeline cannot be read.`; return; }
+        line.replaceChildren(state.state === 'waiting' ? `${tag} is released; waiting for its pipeline… ` : `${tag} is being deployed to production… `, ...(state.pipeline ? [link('Pipeline ↗', state.pipeline)] : []));
+        await new Promise((resolve) => setTimeout(resolve, 10000));
+      }
+    };
+    const renderRelease = (preview) => {
+      const body = $('release-body');
+      body.replaceChildren();
+      const facts = el('dl', 'facts');
+      facts.append(fact('Production now', preview.production ? `${preview.production.tag} (${preview.production.commit.slice(0, 8)})` : 'no release yet'));
+      if (preview.candidate) facts.append(fact('Will ship', `${preview.candidate.sha.slice(0, 8)}, what the test site serves `, link('Pipeline ↗', preview.candidate.pipeline)));
+      body.append(facts);
+      if (!preview.candidate) { body.append(el('p', 'note', 'No main pipeline has passed yet; there is nothing to release.')); return; }
+      if (!preview.changes.length) { body.append(el('p', 'note', `Nothing has changed since ${preview.production.tag}.`)); return; }
+      body.append(el('div', 'section-label', `${preview.changes.length} change${preview.changes.length === 1 ? '' : 's'}${preview.production ? ` since ${preview.production.tag}` : ''}`));
+      const list = el('ul', 'release-changes');
+      for (const change of preview.changes) {
+        const item = el('li');
+        item.title = change.sha.slice(0, 8);
+        item.append(el('span', '', change.subject), el('span', '', change.author));
+        list.append(item);
+      }
+      body.append(list);
+      if (preview.pending.length) body.append(el('p', 'note', `${preview.pending.length} newer commit${preview.pending.length === 1 ? ' is' : 's are'} not on the test site yet and will not ship: ${preview.pending.map((c) => c.subject).join('; ')}`));
+      const form = el('form', 'release-form');
+      // The version is fixed by the site's rule (preview.policy); the title is the version.
+      const versionLabel = el('label', '', 'Version');
+      const version = el('input');
+      version.value = preview.next;
+      version.readOnly = true;
+      version.tabIndex = -1;
+      version.title = preview.policy ? `v${preview.policy}` : 'fixed by the site\'s rule';
+      versionLabel.append(version);
+      const titleLabel = el('label', '', 'Title');
+      const title = el('input');
+      title.value = preview.next;
+      title.readOnly = true;
+      title.tabIndex = -1;
+      titleLabel.append(title);
+      form.append(versionLabel, titleLabel);
+      const actions = el('div', 'proposal-actions');
+      const submit = el('button', 'primary-button', 'Release to production');
+      submit.type = 'submit';
+      const cancel = el('button', 'secondary-button', 'Cancel');
+      cancel.type = 'button';
+      cancel.onclick = () => $('release-dialog').close();
+      const status = el('div', 'proposal-status');
+      actions.append(submit, cancel);
+      if (preview.unchanged) {
+        // The same version as production: no button, only the note.
+        form.hidden = true;
+        submit.hidden = true;
+        cancel.textContent = 'Close';
+        status.className = 'proposal-status info';
+        status.textContent = preview.unchanged;
+      } else if (!preview.canRelease) { submit.disabled = true; status.textContent = preview.reason; }
+      body.append(form, actions, status);
+      const go = async () => {
+        const tag = preview.next;
+        if (!confirm(`Release ${tag} to production (${urls.prodUrl})?\n\n${preview.changes.length} change(s) since ${preview.production?.tag ?? 'the start'}.`)) return;
+        submit.disabled = cancel.disabled = true;
+        status.className = 'proposal-status';
+        status.textContent = `Creating ${tag}…`;
+        try {
+          await api('POST', '/api/release', { tag, sha: preview.candidate.sha });
+          form.hidden = true;
+          actions.hidden = true;
+          followRelease(tag, status);
+        } catch (error) {
+          status.className = 'proposal-status error';
+          status.textContent = error.message;
+          submit.disabled = cancel.disabled = false;
+        }
+      };
+      form.addEventListener('submit', (event) => { event.preventDefault(); go(); });
+      submit.onclick = (event) => { event.preventDefault(); go(); };
+    };
+    const openRelease = async () => {
+      $('release-body').replaceChildren(el('p', 'note', 'Reading what the test site serves…'));
+      $('release-dialog').showModal();
+      try { renderRelease(await api('GET', '/api/release')); } catch (error) {
+        $('release-body').replaceChildren(el('p', 'proposal-status error', error.message));
+      }
+    };
+    $('release-open').addEventListener('click', openRelease);
+    $('release-close').addEventListener('click', () => $('release-dialog').close());
+
+    // ---- Login and the layout.
+    let timers = [];
+    let loginMessage = '';
+    const showLogin = () => {
+      me = null;
+      timers.forEach(clearInterval);
+      timers = [];
+      $('app').hidden = true;
+      $('login-view').hidden = false;
+      // An ended session (the bot restarted) closes the release dialog too.
+      if ($('release-dialog').open) $('release-dialog').close();
+      if (loginMessage) $('login-error').textContent = loginMessage;
+      loginMessage = '';
+    };
+    const showApp = (data) => {
+      me = data.user;
+      urls = { testUrl: data.testUrl, prodUrl: data.prodUrl };
+      brand = data.brand || null;
+      $('who').textContent = me.name;
+      $('llm-model').textContent = data.llm?.model ?? '—';
+      $('llm-provider').textContent = data.llm?.provider ?? '—';
+      // Maintainers and Owners release, as GitLab's protected v* tags allow.
+      $('release-open').hidden = (me.accessLevel ?? 0) < 40;
+      $('test-link').href = urls.testUrl;
+      $('prod-link').href = urls.prodUrl;
+      $('login-view').hidden = true;
+      $('app').hidden = false;
+      sessions = loadSessions();
+      activeId = sessions[0]?.id || null;
+      if (!activeId) createSession(); else { renderSessions(); renderActive(); }
+      loadChanges();
+      loadStatus();
+      timers = [setInterval(loadChanges, 20000), setInterval(loadStatus, 60000)];
+      question.focus();
+    };
+    const setSidebar = (open) => {
+      $('app').classList.toggle('sidebar-open', open);
+      $('scrim').hidden = !open;
+    };
+
+    // A failed GitLab login comes back as ?login_error=…; it is shown once and dropped from the address.
+    const loginError = new URLSearchParams(location.search).get('login_error');
+    if (loginError) {
+      $('login-error').textContent = loginError;
+      history.replaceState(null, '', '/');
+    }
+    $('logout').addEventListener('click', async () => { await api('POST', '/api/logout').catch(() => {}); showLogin(); });
+    $('chat-form').addEventListener('submit', (event) => { event.preventDefault(); send(question.value); });
+    question.addEventListener('input', resize);
+    question.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); $('chat-form').requestSubmit(); }
+    });
+    messages.addEventListener('click', (event) => {
+      const suggestion = event.target.closest('.suggestion');
+      if (suggestion) send(suggestion.textContent || '');
+    });
+    $('new-chat').addEventListener('click', () => { if (!busy) { createSession(); setSidebar(false); question.focus(); } });
+    $('refresh-changes').addEventListener('click', () => { loadChanges(); loadStatus(); });
+    $('session-list').addEventListener('click', (event) => {
+      if (busy) return;
+      const remove = event.target.closest('[data-delete-session-id]');
+      if (remove) {
+        sessions = sessions.filter((s) => s.id !== remove.dataset.deleteSessionId);
+        if (activeId === remove.dataset.deleteSessionId) activeId = sessions[0]?.id || null;
+        saveSessions();
+        if (!activeId) createSession(); else { renderSessions(); renderActive(); }
+        return;
+      }
+      const select = event.target.closest('[data-session-id]');
+      if (select) {
+        activeId = select.dataset.sessionId;
+        renderSessions();
+        renderActive();
+        setSidebar(false);
+      }
+    });
+    $('menu').addEventListener('click', () => setSidebar(!$('app').classList.contains('sidebar-open')));
+    $('scrim').addEventListener('click', () => setSidebar(false));
+
+    api('GET', '/api/me').then(showApp).catch(showLogin);
+  </script>
+</body>
+</html>

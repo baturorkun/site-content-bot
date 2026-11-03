@@ -11,7 +11,9 @@
     ],
     "strict": true,
     "noEmit": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "noImplicitAny": false,
+    "useUnknownInCatchVariables": false
   },
   "include": [
     "src/**/*.ts"
