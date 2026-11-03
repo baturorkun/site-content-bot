@@ -1,6 +1,6 @@
 ---
 id: RQ-0001
-status: draft
+status: ready
 executionMode: handoff
 pipelineFast: false
 createdByName: "Batur Orkun"
@@ -224,8 +224,7 @@ table, developing (`pnpm test`, running `serve` locally against a clone in
   `index`), `assets/page.html` the page; `pnpm build` compiles with no
   runtime dependency, and `package.json` `files` ships `dist`, `assets`,
   `README.md`, `LICENSE`.
-- Nothing under `src/`, `assets/` or `scripts/` names Bytecraft, `bc.int`,
-  `bytecraft.com.tr`, `devops/website`, `site-content.ts` or an IP address
+- Nothing under `src/`, `assets/` or `scripts/` names Bytecraft, its GitLab host or domains, `devops/website`, `site-content.ts` or an IP address
   (`grep -ri` finds none); the website's values appear only in `README.md`
   (the example) and `tests/`.
 - `site-content-bot serve` reads `content-bot.config.mjs` from the clone's

@@ -1,0 +1,86 @@
+{
+  "runId": "20261103193035-RQ-0001",
+  "requirementId": "RQ-0001",
+  "executionMode": "handoff",
+  "fast": false,
+  "handoffPath": "handoffs/20261103193035-RQ-0001/handoff.md",
+  "projectGuidelines": {
+    "combinedSha256": "a6fff543109000792556a4dd4ca0d42fb107e25c07f0486541a2212d8e6e25cb",
+    "files": [
+      {
+        "path": "AGENTS.md",
+        "sha256": "0f5c034ad64d864da6cd44a4ca4b2bf26017412cd5d15a73bae029a96f64ca1d"
+      }
+    ]
+  },
+  "status": "passed",
+  "createdAt": "2026-11-03T19:30:35.633Z",
+  "updatedAt": "2026-11-03T19:51:07.968Z",
+  "steps": [
+    {
+      "agent": "handoff",
+      "status": "passed",
+      "startedAt": "2026-11-03T19:50:52.403Z",
+      "finishedAt": "2026-11-03T19:51:07.967Z",
+      "retries": 0
+    }
+  ],
+  "artifacts": [
+    "README.md",
+    "assets/askpass.sh",
+    "assets/init/Dockerfile",
+    "assets/init/compose.yaml",
+    "assets/init/content-bot.config.mjs",
+    "assets/init/env.example",
+    "assets/page.html",
+    "package.json",
+    "requirements/RQ-0001-the-content-bot-as-a-package-the-website-s-tools-content-bot-moves-here-and-a-site-describes-itself-in-content-bot-config-mjs-editable-files-build-checks-version-policy-brand.md",
+    "src/auth.ts",
+    "src/bot.ts",
+    "src/claude.ts",
+    "src/cli.ts",
+    "src/commands.ts",
+    "src/config.ts",
+    "src/edits.ts",
+    "src/gitlab.ts",
+    "src/index.ts",
+    "src/repo.ts",
+    "src/server.ts",
+    "src/site.ts",
+    "src/svg.ts",
+    "src/version.ts",
+    "tests/bot.test.mjs",
+    "tests/cli.test.mjs",
+    "tests/config.test.mjs",
+    "tests/version.test.mjs",
+    "tsconfig.json"
+  ],
+  "deletedFiles": [
+    "tests/index.test.mjs"
+  ],
+  "gateResults": {
+    "schemaCheck": "passed",
+    "build": "passed",
+    "typeCheck": "passed",
+    "lint": "skipped",
+    "tests": "passed",
+    "security": "passed",
+    "templateCheck": "passed"
+  },
+  "attempts": [
+    {
+      "number": 1,
+      "at": "2026-11-03T19:51:07.968Z",
+      "status": "passed",
+      "tool": "claude-code",
+      "model": "claude-fable-5-1",
+      "failedGates": [],
+      "changedFiles": 28
+    }
+  ],
+  "implementedBy": {
+    "tool": "claude-code",
+    "model": "claude-fable-5-1",
+    "prompt": "Move the website's tools/content-bot into this package as TypeScript, with content-bot.config.mjs (editable files, build, checks, version policy, brand), the serve/check/init commands and the full test suite."
+  }
+}
