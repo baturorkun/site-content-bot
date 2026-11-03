@@ -13,9 +13,9 @@
       }
     ]
   },
-  "status": "passed",
+  "status": "approved",
   "createdAt": "2026-11-03T19:30:35.633Z",
-  "updatedAt": "2026-11-03T19:51:07.968Z",
+  "updatedAt": "2026-11-03T19:55:25.089Z",
   "steps": [
     {
       "agent": "handoff",
@@ -82,5 +82,7 @@
     "tool": "claude-code",
     "model": "claude-fable-5-1",
     "prompt": "Move the website's tools/content-bot into this package as TypeScript, with content-bot.config.mjs (editable files, build, checks, version policy, brand), the serve/check/init commands and the full test suite."
-  }
+  },
+  "approvedAt": "2026-11-03T19:55:25.090Z",
+  "approvedBy": "Batur Orkun"
 }
