@@ -31,36 +31,65 @@ its secrets are in a `.env` on the host.
 
 ## Setting it up for a site
 
-In the site's repository:
+In a clone of the site's repository, on the host that will run the bot:
 
 ```
 npx site-content-bot init
 ```
 
-writes `content-bot.config.mjs` (every field, with comments) and
-`tools/content-bot/{Dockerfile,compose.yaml,.env.example}`; a file that exists
-is kept. Edit the config (below) and commit it. Then, on the host that runs
-the bot:
+`init` is a wizard. It finds out what it can, proposes it (Enter takes the
+proposal) and asks only for the rest:
 
-1. `tools/content-bot/.env` from `.env.example` (the variables below). Git
-   ignores `.env`; it never enters the repository.
-2. The OAuth application, once, with the callback URL
-   `<CONTENT_BOT_URL>/auth/callback`. On GitLab: a group's or the instance's
-   Settings > Applications, name `Content Bot`, confidential, scope
-   `read_user`. On GitHub: Settings > Developer settings > OAuth Apps (of the
-   organisation or a person). Its ID and Secret go into `.env`.
-3. The bot's token, into `.env`. On GitLab: a project access token of the
-   site's project, role Maintainer, scopes `write_repository`, `read_api` and
-   `api` (the releases). On GitHub: see *On GitHub* below.
-4. `docker compose -f tools/content-bot/compose.yaml up -d --build`
-5. The claude login, once (and again when the session expires: the bot then
-   answers "Claude is not logged in in the container"):
+1. **The platform**, first, since the rest follows it. From the clone's
+   `origin`: `github.com` is GitHub, `gitlab.com` is GitLab, and a company's
+   own server is asked without a token whether it is GitLab or GitHub
+   Enterprise. Its address comes from the remote too (`https://gitlab.com`,
+   `https://gitlab.company.com`, a GitHub Enterprise host; nothing for
+   github.com), as do the repository URL and the project path.
+2. **The container engine**: `docker compose`, else `podman compose`, else
+   `podman-compose`; the first that answers is written to `.env` and used
+   from then on.
+3. **The site** (`content-bot.config.mjs`): the name from `package.json`, the
+   build and the checks from the lockfile and its scripts, the build output
+   from `.gitignore`, the content files (`src/content/*`, `src/i18n/**`,
+   `locales/**`, `content/**`, SVGs under `public/`), the deploy jobs from
+   `.gitlab-ci.yml` or `.github/workflows/`, the version policy (`aifactory`
+   when `requirements/` exists, else `patch`); the test and production URLs
+   are asked.
+4. **The bot's address** (`CONTENT_BOT_URL`, proposed
+   `http://<this host>:8290`); its port is the port the container publishes
+   on the host. Without a port (a proxy in front) the host port is asked.
+5. **The OAuth application**: the wizard prints the page to open and what to
+   enter there (the callback URL included), then asks for its ID and secret.
+   This is the one step on the platform's pages; there is no API for it.
+6. **The token**, with where to make it and which rights it needs. It is
+   checked at once: the project answers it, it may push (on GitLab its
+   scopes, on GitHub `permissions.push`), git reaches the repository. A
+   refusal says why and asks again.
 
-   ```
-   docker exec -it site-content-bot claude
-   ```
+It writes `content-bot.config.mjs` and `tools/content-bot/{Dockerfile,
+compose.yaml}` (commit these) and `tools/content-bot/.env` (mode `0600`, added
+to `.gitignore`, never committed), and ends with the commands to start the
+container and log claude in. Run again, it proposes what it wrote; the
+Dockerfile and the compose file are kept.
 
-   then `/login` in it, and leave with `/exit`.
+Without a terminal: `init --yes` takes every proposal; what has none comes
+from flags (`--test-url`, `--production-url`, `--url`, `--oauth-id`, and
+`--platform`, `--project`, `--repo-url`, `--platform-url`, `--engine`,
+`--port`, `--min-access`, `--model` to override) and the secrets from the
+environment (`CONTENT_BOT_TOKEN`, `CONTENT_BOT_OAUTH_SECRET`). A value with no
+source stops it, naming the flag; so does a token the platform refuses.
+
+Then start it:
+
+```
+docker compose -f tools/content-bot/compose.yaml up -d --build
+docker exec -it site-content-bot claude      # /login once, then /exit
+```
+
+(`podman compose` with Podman.) The claude login is needed again when the
+session expires: the bot then answers "Claude is not logged in in the
+container".
 
 `site-content-bot check` in the container reports whether everything is in
 place: the platform chosen, each variable, the repository, the config, the
@@ -176,7 +205,7 @@ and its description lists the commits since production.
 
 ## Settings (environment)
 
-In `tools/content-bot/.env` on the host, never in the repository:
+In `tools/content-bot/.env` on the host, never in the repository; `init` writes it:
 
 | Variable | |
 |---|---|
@@ -189,7 +218,9 @@ In `tools/content-bot/.env` on the host, never in the repository:
 | `CONTENT_BOT_OAUTH_ID`, `CONTENT_BOT_OAUTH_SECRET` | the OAuth application |
 | `CONTENT_BOT_MIN_ACCESS` | the access a person needs, default `30` (Developer on GitLab, the write role on GitHub) |
 | `CONTENT_BOT_MODEL` | default `claude-opus-5-5` |
-| `CONTENT_BOT_PORT` | default `8290` |
+| `CONTENT_BOT_ENGINE` | the container engine: `docker`, `podman` or `podman-compose` (`init` writes it) |
+| `CONTENT_BOT_HOST_PORT` | the host port the compose file publishes, default `8290` |
+| `CONTENT_BOT_PORT` | the port the bot listens on inside the container, default `8290` |
 | `CONTENT_BOT_REPO_DIR` | the clone, default `/data/repo` |
 | `CONTENT_BOT_SITE_DIR` | the copies, default `/data/site` |
 | `CLAUDE_EXECUTABLE` | default `claude` |
@@ -210,7 +241,7 @@ jobs named in the config's `deploy`.
 ```
 site-content-bot serve [--config <file>]   start the bot
 site-content-bot check [--config <file>]   report whether everything is in place; exit 1 if not
-site-content-bot init  [--dir <path>]      write what a site needs
+site-content-bot init  [--dir <path>]      the wizard: set the bot up for the site (--yes without questions)
 ```
 
 `--config` names a config file instead of the one at the clone's root (for a

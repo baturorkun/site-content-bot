@@ -1,0 +1,50 @@
+{
+  "runId": "20261104092826-RQ-0003",
+  "requirementId": "RQ-0003",
+  "executionMode": "handoff",
+  "fast": false,
+  "handoffPath": "handoffs/20261104092826-RQ-0003/handoff.md",
+  "projectGuidelines": {
+    "combinedSha256": "a6fff543109000792556a4dd4ca0d42fb107e25c07f0486541a2212d8e6e25cb",
+    "files": [
+      {
+        "path": "AGENTS.md",
+        "sha256": "0f5c034ad64d864da6cd44a4ca4b2bf26017412cd5d15a73bae029a96f64ca1d"
+      }
+    ]
+  },
+  "status": "approved",
+  "createdAt": "2026-11-04T09:28:26.335Z",
+  "updatedAt": "2026-11-04T09:33:49.455Z",
+  "steps": [
+    {
+      "agent": "handoff",
+      "status": "passed",
+      "startedAt": "2026-11-04T09:32:20.941Z",
+      "finishedAt": "2026-11-04T09:32:37.877Z",
+      "retries": 0
+    }
+  ],
+  "artifacts": [],
+  "deletedFiles": [],
+  "gateResults": {
+    "schemaCheck": "passed",
+    "build": "passed",
+    "typeCheck": "passed",
+    "lint": "skipped",
+    "tests": "passed",
+    "security": "skipped",
+    "templateCheck": "passed"
+  },
+  "attempts": [
+    {
+      "number": 1,
+      "at": "2026-11-04T09:32:37.877Z",
+      "status": "passed",
+      "failedGates": [],
+      "changedFiles": 0
+    }
+  ],
+  "approvedAt": "2026-11-04T09:33:49.456Z",
+  "approvedBy": "Batur Orkun"
+}

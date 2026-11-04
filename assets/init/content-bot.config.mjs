@@ -1,6 +1,6 @@
 // content-bot.config.mjs: how this site describes itself to site-content-bot.
 // Everything about the *site* is here; where the bot runs and its secrets are
-// in tools/content-bot/.env on the host (see .env.example). Read once, when
+// in tools/content-bot/.env on the host (`site-content-bot init` writes it). Read once, when
 // the bot starts: a change here takes effect on its restart.
 export default {
   // How the page names the site and the bot. Only name is required: mark
