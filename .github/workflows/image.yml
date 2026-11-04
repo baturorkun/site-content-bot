@@ -1,0 +1,96 @@
+name: image
+
+# The container image (RQ-0005): ghcr.io/<owner>/site-content-bot:<version>
+# and :latest, for linux/amd64 and linux/arm64, from the tagged commit.
+#
+# - A pushed tag v<version>: checked against package.json, packed (npm pack),
+#   built from docker/Dockerfile and pushed with this workflow's GITHUB_TOKEN.
+#   The tag is pushed by a person, as for npm (publish.yml); an agent never
+#   creates one.
+# - Run by hand with a tag: that tag, built and pushed. Without one: the
+#   default branch built for both platforms, nothing pushed.
+#
+# The first image creates the GHCR package; making it public is the owner's
+# setting on GitHub (the package's settings, Danger zone, Change visibility).
+# This project's workflow, not the aifactory template's.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: A v* tag to build and push (empty builds the default branch without pushing)
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name) || '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.9 --activate
+
+      - name: The tag is the package.json version
+        id: version
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ -n "$TAG" ] && [ "$TAG" != "v$version" ]; then
+            echo "::error::The tag $TAG is not v$version, the version in package.json."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          owner="$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          echo "image=ghcr.io/$owner/site-content-bot" >> "$GITHUB_OUTPUT"
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Pack the tagged code
+        id: pack
+        run: echo "tarball=$(npm pack --silent | tail -1)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: env.TAG != ''
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build (and push on a tag)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            TARBALL=${{ steps.pack.outputs.tarball }}
+            VERSION=${{ steps.version.outputs.version }}
+          push: ${{ env.TAG != '' }}
+          tags: |
+            ${{ steps.version.outputs.image }}:${{ steps.version.outputs.version }}
+            ${{ steps.version.outputs.image }}:latest

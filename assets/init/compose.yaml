@@ -1,11 +1,13 @@
-# site-content-bot for this site. Settings come from a .env next to this file
-# on the host, written by `site-content-bot init`, never from the repository.
-# The same .env gives CONTENT_BOT_HOST_PORT below (compose reads it from here).
+# site-content-bot for this site: the published image, nothing built here.
+# Settings come from the .env next to this file on the host, written by
+# `site-content-bot init`, never from the repository; compose reads the same
+# .env for the names and the port below. Run it with `site-content-bot start`
+# (stop, logs, status, update, login).
+name: ${CONTENT_BOT_CONTAINER:-site-content-bot}
 services:
   content-bot:
-    build: .
-    image: site-content-bot:local
-    container_name: site-content-bot
+    image: ${CONTENT_BOT_IMAGE:-ghcr.io/baturorkun/site-content-bot:{{version}}}
+    container_name: ${CONTENT_BOT_CONTAINER:-site-content-bot}
     restart: unless-stopped
     env_file: .env
     ports:

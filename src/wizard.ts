@@ -20,7 +20,7 @@ export interface Ask {
 }
 
 // The settings the wizard writes to .env, by their flag names.
-export const FLAGS = ['repo-url', 'platform', 'platform-url', 'project', 'engine', 'url', 'port', 'oauth-id', 'oauth-secret', 'token', 'min-access', 'llm', 'model', 'test-url', 'production-url'] as const;
+export const FLAGS = ['repo-url', 'platform', 'platform-url', 'project', 'engine', 'container', 'url', 'port', 'oauth-id', 'oauth-secret', 'token', 'min-access', 'llm', 'model', 'test-url', 'production-url'] as const;
 export type Flag = (typeof FLAGS)[number];
 
 export interface Settings {
@@ -38,12 +38,14 @@ export interface Settings {
   CONTENT_BOT_MODEL: string;
   // The host port the compose file publishes; inside the container the bot listens on 8290.
   CONTENT_BOT_HOST_PORT: string;
+  // The container's name and its compose project (its volume): one per site on a host.
+  CONTENT_BOT_CONTAINER: string;
 }
 
 export class WizardError extends Error {}
 
 const ENV_FILE = 'tools/content-bot/.env';
-const OPTIONAL: Partial<Record<keyof Settings, string>> = { CONTENT_BOT_MIN_ACCESS: '30', CONTENT_BOT_HOST_PORT: '8290', CONTENT_BOT_PLATFORM_URL: '', CONTENT_BOT_PLATFORM: '', CONTENT_BOT_ENGINE: '' };
+const OPTIONAL: Partial<Record<keyof Settings, string>> = { CONTENT_BOT_MIN_ACCESS: '30', CONTENT_BOT_HOST_PORT: '8290', CONTENT_BOT_CONTAINER: 'site-content-bot', CONTENT_BOT_PLATFORM_URL: '', CONTENT_BOT_PLATFORM: '', CONTENT_BOT_ENGINE: '' };
 
 // KEY=VALUE lines of a .env (quotes around the value dropped, comments skipped).
 export const readEnv = (file: string): Partial<Settings> => {
@@ -86,6 +88,9 @@ export const writeEnv = (file: string, settings: Settings): void => {
     line('CONTENT_BOT_LLM', 'The language model CLI that answers: claude or codex.'),
     line('CONTENT_BOT_MODEL', "That CLI's model; empty: its default (claude-opus-5-5 for claude, codex's own for codex)."),
     line('CONTENT_BOT_HOST_PORT', 'The host port the compose file publishes (the bot listens on 8290 inside).'),
+    line('CONTENT_BOT_CONTAINER', "The container's name and its compose project: one per site on a host."),
+    "# The image, when a site builds its own FROM ghcr.io/baturorkun/site-content-bot (default: compose.yaml's).",
+    '#CONTENT_BOT_IMAGE=',
     '',
   ].join('\n');
   mkdirSync(dirname(file), { recursive: true });
@@ -241,6 +246,8 @@ export const runWizard = async (options: WizardOptions): Promise<WizardResult> =
   // 3. The engine.
   const engineIn = await value('engine', 'The container engine (docker, podman, podman-compose)', current.CONTENT_BOT_ENGINE || found.engine || undefined, { required: false });
   const engine = (engineIn || null) as Engine | null;
+  const containerName = await value('container', "The container's name (one per site on this host)", current.CONTENT_BOT_CONTAINER || 'site-content-bot');
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(containerName)) throw new WizardError(`the container's name is letters, digits, _ . -, not ${JSON.stringify(containerName)}`);
   if (!engine) warnings.push('no container engine answers: install Docker (docker compose) or Podman (podman compose) before starting the bot');
   else if (!['docker', 'podman', 'podman-compose'].includes(engine)) throw new WizardError(`the engine is docker, podman or podman-compose, not ${JSON.stringify(engine)}`);
 
@@ -344,14 +351,14 @@ export const runWizard = async (options: WizardOptions): Promise<WizardResult> =
     CONTENT_BOT_LLM: llm,
     CONTENT_BOT_MODEL: model,
     CONTENT_BOT_HOST_PORT: port,
+    CONTENT_BOT_CONTAINER: containerName,
   };
   const written: string[] = [];
   const kept: string[] = [];
   writeFileSync(configFile, configSource(config));
   written.push(CONFIG_FILE);
   for (const [target, source, fill] of [
-    ['tools/content-bot/Dockerfile', 'Dockerfile', (text: string) => text.replace('{{version}}', version)],
-    ['tools/content-bot/compose.yaml', 'compose.yaml', (text: string) => text],
+    ['tools/content-bot/compose.yaml', 'compose.yaml', (text: string) => text.replace('{{version}}', version)],
   ] as [string, string, (text: string) => string][]) {
     const path = join(dir, target);
     if (existsSync(path)) { kept.push(target); continue; }
@@ -359,6 +366,7 @@ export const runWizard = async (options: WizardOptions): Promise<WizardResult> =
     writeFileSync(path, fill(readFileSync(join(templates, source), 'utf8')));
     written.push(target);
   }
+  if (existsSync(join(dir, 'tools/content-bot/Dockerfile'))) warnings.push('tools/content-bot/Dockerfile is no longer used (the container runs the published image); delete it');
   writeEnv(envFile, settings);
   written.push(ENV_FILE);
   if (ignoreEnv(dir)) written.push('.gitignore (+ tools/content-bot/.env)');
@@ -368,11 +376,9 @@ export const runWizard = async (options: WizardOptions): Promise<WizardResult> =
   for (const file of written) ask.note(`written  ${file}`);
   for (const file of kept) ask.note(`kept     ${file}`);
   for (const warning of warnings) ask.note(`warning  ${warning}`);
-  ask.note(`\nNext: commit ${CONFIG_FILE} and tools/content-bot/{Dockerfile,compose.yaml} (not .env), then:`);
-  const runner = engine && engine !== 'docker' ? 'podman' : 'docker';
-  ask.note(`  ${engine ? composeCommand(engine).join(' ') : 'docker compose'} -f tools/content-bot/compose.yaml up -d --build`);
-  ask.note(`  ${runner} exec -it site-content-bot ${LLMS[llm].login}`);
-  ask.note(`  ${runner} exec -it site-content-bot site-content-bot check`);
+  ask.note(`\nNext: commit ${CONFIG_FILE} and tools/content-bot/compose.yaml (not .env), then:`);
+  ask.note('  npx site-content-bot start      # up, healthy, checked; it logs the model CLI in');
+  ask.note(`  (by hand: ${engine ? composeCommand(engine).join(' ') : 'docker compose'} -f tools/content-bot/compose.yaml up -d, then ${engine && engine !== 'docker' ? 'podman' : 'docker'} exec -it ${containerName} ${LLMS[llm].login.split('#')[0]!.trim()})`);
   ask.note(`The bot will be at ${botUrl} (host port ${port}); log in with ${platform === 'gitlab' ? 'GitLab' : 'GitHub'}.`);
   return { written, kept, settings, config, engine, warnings };
 };

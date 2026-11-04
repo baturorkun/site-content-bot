@@ -68,34 +68,60 @@ proposal) and asks only for the rest:
    scopes, on GitHub `permissions.push`), git reaches the repository. A
    refusal says why and asks again.
 
-It writes `content-bot.config.mjs` and `tools/content-bot/{Dockerfile,
-compose.yaml}` (commit these) and `tools/content-bot/.env` (mode `0600`, added
-to `.gitignore`, never committed), and ends with the commands to start the
-container and log the model CLI in. Run again, it proposes what it wrote; the
-Dockerfile and the compose file are kept.
+It writes `content-bot.config.mjs` and `tools/content-bot/compose.yaml`
+(commit these) and `tools/content-bot/.env` (mode `0600`, added to
+`.gitignore`, never committed). The compose file runs the published image
+(below, *Running it*); nothing is built on the host. Run again, it proposes
+what it wrote and keeps the compose file.
 
 Without a terminal: `init --yes` takes every proposal; what has none comes
 from flags (`--test-url`, `--production-url`, `--url`, `--oauth-id`, and
 `--platform`, `--project`, `--repo-url`, `--platform-url`, `--engine`,
-`--port`, `--min-access`, `--model` to override) and the secrets from the
+`--container`, `--port`, `--min-access`, `--llm`, `--model` to override) and the secrets from the
 environment (`CONTENT_BOT_TOKEN`, `CONTENT_BOT_OAUTH_SECRET`). A value with no
 source stops it, naming the flag; so does a token the platform refuses.
 
 Then start it:
 
 ```
-docker compose -f tools/content-bot/compose.yaml up -d --build
-docker exec -it site-content-bot claude      # /login once, then /exit
-docker exec -it site-content-bot codex login --device-auth      # with CONTENT_BOT_LLM=codex
+npx site-content-bot start
 ```
 
-(`podman compose` and `podman exec` with Podman.) The login is needed again
-when it expires: the bot then answers that the CLI is not logged in in the
-container.
+## Running it
 
-`site-content-bot check` in the container reports whether everything is in
-place: the platform chosen, the language model, each variable, the
-repository, the config, the platform's API, the model CLI's login.
+In the site's clone on the host, after `init` (each takes `--dir <path>`):
+
+```
+site-content-bot start                    up, healthy, checked; logs the model CLI in; prints the address
+site-content-bot stop                     down; the volume (clone, copies, logins) is kept
+site-content-bot logs [--follow]          the container's log
+site-content-bot status                   whether it runs, and its check
+site-content-bot update [--to <version>]  the image to <version> (default: this CLI's), pulled and started
+site-content-bot login                    the model CLI's login again, when it expired
+```
+
+They use the engine `init` found (`CONTENT_BOT_ENGINE`: `docker`, `podman` or
+`podman-compose`) and print each command before they run it. `start` waits
+for the container's health check, then runs `site-content-bot check` in it:
+the platform, the language model, each variable, the repository, the config,
+the platform's API and the model CLI's login. When only the login is missing
+and you are at a terminal, it opens it (`claude` then `/login`, or `codex
+login --device-auth`) and checks again; without a terminal it prints the
+command and exits 1. `npx site-content-bot@latest update` moves a site to the
+newest bot.
+
+**The image** is `ghcr.io/baturorkun/site-content-bot:<version>` (and
+`:latest`), for amd64 and arm64: Node 20, git, pnpm and yarn, both model CLIs
+at fixed versions, and this package. Every release publishes one
+(`.github/workflows/image.yml`, from the tagged code). The first one creates
+the package on GitHub, where its owner makes it public once (the package's
+settings, *Change visibility*). A site that needs more for its build or
+checks (Python, a browser) builds its own image `FROM` this one and names it
+in `CONTENT_BOT_IMAGE` in `.env`.
+
+**Two sites on one host**: give each its own `CONTENT_BOT_CONTAINER` (the
+container's name and its compose project, so its own volume) and its own host
+port; `init` asks both.
 
 ## The language model
 
@@ -238,6 +264,8 @@ In `tools/content-bot/.env` on the host, never in the repository; `init` writes 
 | `CONTENT_BOT_MODEL` | the chosen CLI's model; default `claude-opus-5-5` for claude, codex's own for codex |
 | `CONTENT_BOT_ENGINE` | the container engine: `docker`, `podman` or `podman-compose` (`init` writes it) |
 | `CONTENT_BOT_HOST_PORT` | the host port the compose file publishes, default `8290` |
+| `CONTENT_BOT_CONTAINER` | the container's name and compose project, default `site-content-bot` |
+| `CONTENT_BOT_IMAGE` | another image (one built `FROM` the published one); default the compose file's |
 | `CONTENT_BOT_PORT` | the port the bot listens on inside the container, default `8290` |
 | `CONTENT_BOT_REPO_DIR` | the clone, default `/data/repo` |
 | `CONTENT_BOT_SITE_DIR` | the copies, default `/data/site` |
@@ -257,9 +285,10 @@ jobs named in the config's `deploy`.
 ## The command
 
 ```
-site-content-bot serve [--config <file>]   start the bot
+site-content-bot serve [--config <file>]   the bot itself (what the container runs)
 site-content-bot check [--config <file>]   report whether everything is in place; exit 1 if not
 site-content-bot init  [--dir <path>]      the wizard: set the bot up for the site (--yes without questions)
+site-content-bot start|stop|logs|status|update|login   the container (Running it, above)
 ```
 
 `--config` names a config file instead of the one at the clone's root (for a

@@ -55,23 +55,23 @@ test('init: without a terminal and without --yes it refuses; --yes names a missi
   const refused = cli(['init', '--dir', site, '--yes', ...flags], { ...bare, CONTENT_BOT_OAUTH_SECRET: 's', CONTENT_BOT_TOKEN: 'glpat-x' });
   assert.equal(refused.status, 2, refused.stderr);
   assert.match(refused.stderr, /the token was refused: /);
-  for (const file of ['content-bot.config.mjs', 'tools/content-bot/.env', 'tools/content-bot/Dockerfile']) assert.ok(!existsSync(join(site, file)), `${file} is not written`);
+  for (const file of ['content-bot.config.mjs', 'tools/content-bot/.env', 'tools/content-bot/compose.yaml']) assert.ok(!existsSync(join(site, file)), `${file} is not written`);
   assert.doesNotMatch(refused.stdout + refused.stderr, /glpat-x/, 'the token is never printed');
 
   const help = cli(['--help']);
-  for (const flag of ['--yes', '--platform', '--platform-url', '--token', '--oauth-secret', '--port', '--llm']) assert.match(help.stdout, new RegExp(flag.replace(/-/g, '\\-')), flag);
+  for (const command of ['start', 'stop', 'logs \\[--follow\\]', 'status', 'update \\[--to <version>\\]', 'login']) assert.match(help.stdout, new RegExp(`^  ${command} `, 'm'), command);
+  for (const flag of ['--yes', '--platform', '--platform-url', '--token', '--oauth-secret', '--port', '--llm', '--container']) assert.match(help.stdout, new RegExp(flag.replace(/-/g, '\\-')), flag);
 });
 
-test('the init templates: the Dockerfile installs this version and copies nothing, compose publishes CONTENT_BOT_HOST_PORT', () => {
-  const dockerfile = readFileSync('assets/init/Dockerfile', 'utf8');
-  assert.match(dockerfile, /site-content-bot@\{\{version\}\}/);
-  assert.match(dockerfile, /@anthropic-ai\/claude-code@\d+\.\d+\.\d+ @openai\/codex@\d+\.\d+\.\d+ /, 'both CLIs, at fixed versions');
-  assert.match(dockerfile, /CMD \["site-content-bot", "serve"\]/);
-  assert.doesNotMatch(dockerfile, /COPY/, 'nothing of the site is copied; the clone is made at run time');
+test('the init template: compose runs the published image of this version, nothing built; names and port from .env; no Dockerfile', () => {
   const compose = readFileSync('assets/init/compose.yaml', 'utf8');
+  assert.match(compose, /^name: \$\{CONTENT_BOT_CONTAINER:-site-content-bot\}$/m, 'the project: one volume per site');
+  assert.match(compose, /image: \$\{CONTENT_BOT_IMAGE:-ghcr\.io\/baturorkun\/site-content-bot:\{\{version\}\}\}/);
+  assert.match(compose, /container_name: \$\{CONTENT_BOT_CONTAINER:-site-content-bot\}/);
   assert.match(compose, /env_file: \.env/);
   assert.match(compose, /"\$\{CONTENT_BOT_HOST_PORT:-8290\}:8290"/);
-  assert.ok(!existsSync('assets/init/env.example'), 'the wizard writes .env; there is no example to copy');
+  assert.doesNotMatch(compose, /^\s*build\s*:/m, 'nothing is built on the host');
+  for (const gone of ['assets/init/Dockerfile', 'assets/init/env.example']) assert.ok(!existsSync(gone), `${gone} is gone`);
   assert.match(readFileSync('assets/init/content-bot.config.mjs', 'utf8'), /deploy: \{ test: 'deploy_linux', production: 'deploy_release' \}/);
 });
 
