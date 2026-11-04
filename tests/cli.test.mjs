@@ -5,7 +5,7 @@
 // missing; the platform from CONTENT_BOT_PLATFORM or the repository host.
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -59,13 +59,13 @@ test('init: without a terminal and without --yes it refuses; --yes names a missi
   assert.doesNotMatch(refused.stdout + refused.stderr, /glpat-x/, 'the token is never printed');
 
   const help = cli(['--help']);
-  for (const flag of ['--yes', '--platform', '--platform-url', '--token', '--oauth-secret', '--port']) assert.match(help.stdout, new RegExp(flag.replace(/-/g, '\\-')), flag);
+  for (const flag of ['--yes', '--platform', '--platform-url', '--token', '--oauth-secret', '--port', '--llm']) assert.match(help.stdout, new RegExp(flag.replace(/-/g, '\\-')), flag);
 });
 
 test('the init templates: the Dockerfile installs this version and copies nothing, compose publishes CONTENT_BOT_HOST_PORT', () => {
   const dockerfile = readFileSync('assets/init/Dockerfile', 'utf8');
   assert.match(dockerfile, /site-content-bot@\{\{version\}\}/);
-  assert.match(dockerfile, /@anthropic-ai\/claude-code@/);
+  assert.match(dockerfile, /@anthropic-ai\/claude-code@\d+\.\d+\.\d+ @openai\/codex@\d+\.\d+\.\d+ /, 'both CLIs, at fixed versions');
   assert.match(dockerfile, /CMD \["site-content-bot", "serve"\]/);
   assert.doesNotMatch(dockerfile, /COPY/, 'nothing of the site is copied; the clone is made at run time');
   const compose = readFileSync('assets/init/compose.yaml', 'utf8');
@@ -83,7 +83,8 @@ test('check with an empty environment reports each missing variable and exits 1;
   assert.match(result.stdout, /^FAIL CONTENT_BOT_TEST_URL is not set: it has moved to content-bot\.config\.mjs \(urls\.test\)$/m);
   assert.match(result.stdout, /^FAIL GITLAB_URL is not set: GITLAB_URL is now CONTENT_BOT_PLATFORM_URL$/m);
   assert.match(result.stdout, /^FAIL .*none\.mjs loads: .*none\.mjs does not exist$/m);
-  assert.match(result.stdout, /^FAIL .*no-claude answers \(logged in\): claude could not be started/m);
+  assert.match(result.stdout, /^FAIL .*no-claude answers \(the claude CLI, logged in\): claude could not be started/m);
+  assert.match(result.stdout, /^ok   the language model is claude: claude-cli \(subscription\), model claude-opus-5-5; CONTENT_BOT_LLM is empty, so claude$/m);
 });
 
 test('check reports a config that loads, with its editable files and version rule', () => {
@@ -116,6 +117,25 @@ test('serve refuses to start on a removed variable, naming the field, on a renam
   const wrong = cli(['serve'], { ...bare, CONTENT_BOT_PLATFORM: 'bitbucket' });
   assert.equal(wrong.status, 1);
   assert.match(wrong.stderr, /CONTENT_BOT_PLATFORM is "bitbucket"; it is one of gitlab, github/);
+});
+
+test('the language model: codex is probed through its executable with its own default model; an unknown one is refused by serve and check', () => {
+  const codex = join(work, 'fake-codex');
+  // A codex that writes the answer to --output-last-message and records its arguments.
+  writeFileSync(codex, `#!/bin/sh\ncat > /dev/null\nprintf "%s\\n" "$@" > "${join(work, 'codex-args.txt')}"\nwhile [ $# -gt 0 ]; do if [ "$1" = --output-last-message ]; then printf '{"ok":true}' > "$2"; fi; shift; done\n`);
+  chmodSync(codex, 0o755);
+  const result = cli(['check', '--config', join(work, 'none.mjs')], { ...bare, CONTENT_BOT_LLM: 'codex', CODEX_EXECUTABLE: codex });
+  assert.match(result.stdout, /^ok   the language model is codex: codex-cli, model \(its default\)$/m);
+  assert.match(result.stdout, new RegExp(`^ok   ${codex.replace(/[.]/g, '\\.')} answers \\(the codex CLI, logged in\\): model \\(its default\\)$`, 'm'));
+  const args = readFileSync(join(work, 'codex-args.txt'), 'utf8').split('\n');
+  assert.deepEqual(args.slice(0, 2), ['--sandbox', 'read-only']);
+  assert.ok(!args.includes('--model'), 'no model: codex chooses');
+  const wrong = cli(['check'], { ...bare, CONTENT_BOT_LLM: 'gemini' });
+  assert.equal(wrong.status, 1);
+  assert.match(wrong.stdout, /^FAIL the language model is known: CONTENT_BOT_LLM is "gemini"; it is one of claude, codex$/m);
+  const serve = cli(['serve'], { ...bare, CONTENT_BOT_LLM: 'gemini' });
+  assert.equal(serve.status, 1);
+  assert.match(serve.stderr, /CONTENT_BOT_LLM is "gemini"; it is one of claude, codex/);
 });
 
 test('check names the platform: from CONTENT_BOT_PLATFORM, or from the repository host, with the GitHub default URL', () => {

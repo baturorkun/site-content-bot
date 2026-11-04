@@ -9,10 +9,10 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { ContentBot } from './bot.js';
-import { askClaude } from './claude.js';
 import { CONFIG_FILE, loadConfig, type Config } from './config.js';
 import { Editable } from './edits.js';
 import { composeCommand, defaultExec, type Engine } from './detect.js';
+import { LLMS, llmOf, makeAsk, probe } from './llm.js';
 import { createPlatform, platformOf, type PlatformName } from './platform.js';
 import { Repo } from './repo.js';
 import { createApp } from './server.js';
@@ -73,7 +73,9 @@ const renamedVariables = (env: NodeJS.ProcessEnv): string[] => Object.keys(RENAM
 const settings = (env: NodeJS.ProcessEnv) => {
   const repoUrl = env.CONTENT_BOT_REPO_URL ?? '';
   const chosen = platformOf(env.CONTENT_BOT_PLATFORM || undefined, repoUrl);
+  const llm = llmOf(env.CONTENT_BOT_LLM || undefined);
   return {
+    llm,
     repoUrl,
     platform: chosen.platform,
     platformFrom: chosen.from,
@@ -84,11 +86,11 @@ const settings = (env: NodeJS.ProcessEnv) => {
     oauthSecret: env.CONTENT_BOT_OAUTH_SECRET ?? '',
     project: env.CONTENT_BOT_PROJECT ?? '',
     minAccess: Number(env.CONTENT_BOT_MIN_ACCESS || 30),
-    model: env.CONTENT_BOT_MODEL || 'claude-opus-5-5',
+    model: env.CONTENT_BOT_MODEL || LLMS[llm].defaultModel,
     siteDir: env.CONTENT_BOT_SITE_DIR || '/data/site',
     repoDir: env.CONTENT_BOT_REPO_DIR || '/data/repo',
     port: Number(env.CONTENT_BOT_PORT || 8290),
-    claude: env.CLAUDE_EXECUTABLE || 'claude',
+    executable: env[LLMS[llm].executableVariable] || LLMS[llm].defaultExecutable,
   };
 };
 
@@ -158,11 +160,12 @@ export const serve = async (env: NodeJS.ProcessEnv, { configPath }: { configPath
       create: (release) => platform.createRelease(release),
       state: (tag) => platform.deployState({ ref: tag, job: config.deploy.production }),
     },
-    ask: (prompt, schema, dirs) => askClaude({ executable: s.claude, model: s.model, prompt, schema, dirs }),
+    reads: LLMS[s.llm].reads,
+    ask: makeAsk({ llm: s.llm, executable: s.executable, model: s.model }),
   });
   const login = { platform: platform.name, host: platform.host, project: s.project, access: platform.accessName(s.minAccess) };
-  createApp({ auth: platform.auth, bot, deploy, config, login, llm: { provider: 'claude-cli (subscription)', model: s.model } })
-    .listen(s.port, () => console.log(`${config.brand.title}: listening on :${s.port}, model ${s.model}, ${platform.name} login for ${s.project} at ${platform.host} (${login.access} access or above; platform from ${s.platformFrom}), ${config.brand.name}`));
+  createApp({ auth: platform.auth, bot, deploy, config, login, llm: { provider: LLMS[s.llm].provider, model: s.model || `${s.llm}'s default` } })
+    .listen(s.port, () => console.log(`${config.brand.title}: listening on :${s.port}, ${s.llm} model ${s.model || '(its default)'}, ${platform.name} login for ${s.project} at ${platform.host} (${login.access} access or above; platform from ${s.platformFrom}), ${config.brand.name}`));
 };
 
 const lsRemote = (repo: Repo): Promise<void> => new Promise((resolvePromise, reject) => {
@@ -195,10 +198,11 @@ export const check = async (env: NodeJS.ProcessEnv, { configPath, out = console.
   try {
     s = settings(env);
   } catch (error) {
-    report(false, 'the platform is known', String(error?.message ?? error));
+    report(false, String(error?.message ?? error).startsWith('CONTENT_BOT_LLM') ? 'the language model is known' : 'the platform is known', String(error?.message ?? error));
     return false;
   }
   report(true, `the platform is ${s.platform === 'github' ? 'GitHub' : 'GitLab'}`, `from ${s.platformFrom}${s.platform === 'github' && !env[PLATFORM_URL] ? `; ${PLATFORM_URL} defaults to ${GITHUB_URL}` : ''}`);
+  report(true, `the language model is ${s.llm}`, `${LLMS[s.llm].provider}, model ${s.model || '(its default)'}${env.CONTENT_BOT_LLM ? '' : '; CONTENT_BOT_LLM is empty, so claude'}`);
   if (env.CONTENT_BOT_ENGINE) {
     const [command, ...args] = composeCommand(env.CONTENT_BOT_ENGINE as Engine);
     await tryIt(`the container engine ${env.CONTENT_BOT_ENGINE} answers`, () => defaultExec(command!, [...args, 'version']), (said) => said.trim().split('\n')[0]!);
@@ -218,13 +222,7 @@ export const check = async (env: NodeJS.ProcessEnv, { configPath, out = console.
     const platform = makePlatform(s);
     await tryIt(`${platform.name}'s API answers for ${s.project}`, () => platform.projectReachable(), (path) => path);
   }
-  await tryIt(`${s.claude} answers (logged in)`, () => askClaude({
-    executable: s.claude,
-    model: s.model,
-    prompt: 'Answer with the JSON asked for: ok true.',
-    schema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'], additionalProperties: false },
-    timeoutMs: 120_000,
-  }), () => `model ${s.model}`);
+  await tryIt(`${s.executable} answers (the ${s.llm} CLI, logged in)`, () => probe({ llm: s.llm, executable: s.executable, model: s.model }), () => `model ${s.model || '(its default)'}`);
   return ok;
 };
 

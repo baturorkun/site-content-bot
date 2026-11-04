@@ -21,9 +21,10 @@ fixes.
   markup is untouched, and runs the site's checks; a failure pushes nothing.
 - Each change is one commit on main, authored by the person who asked, with
   `Requested-by:` and `Content-bot:` trailers.
-- The answers come from the `claude` CLI under a signed-in subscription (no
-  API key). It may use `Read`, `Glob` and `Grep` in the copies only; every
-  other tool is denied. Chats are kept in the browser.
+- The answers come from a language model CLI signed in inside the
+  container: `claude` (the default, a Claude subscription) or `codex` (a
+  ChatGPT login or an OpenAI key). It reads the copies only and writes
+  nothing (below, *The language model*). Chats are kept in the browser.
 
 The bot knows nothing about any one site. A site describes itself in
 `content-bot.config.mjs` at the root of its repository; where the bot runs and
@@ -70,7 +71,7 @@ proposal) and asks only for the rest:
 It writes `content-bot.config.mjs` and `tools/content-bot/{Dockerfile,
 compose.yaml}` (commit these) and `tools/content-bot/.env` (mode `0600`, added
 to `.gitignore`, never committed), and ends with the commands to start the
-container and log claude in. Run again, it proposes what it wrote; the
+container and log the model CLI in. Run again, it proposes what it wrote; the
 Dockerfile and the compose file are kept.
 
 Without a terminal: `init --yes` takes every proposal; what has none comes
@@ -85,15 +86,31 @@ Then start it:
 ```
 docker compose -f tools/content-bot/compose.yaml up -d --build
 docker exec -it site-content-bot claude      # /login once, then /exit
+docker exec -it site-content-bot codex login --device-auth      # with CONTENT_BOT_LLM=codex
 ```
 
-(`podman compose` with Podman.) The claude login is needed again when the
-session expires: the bot then answers "Claude is not logged in in the
-container".
+(`podman compose` and `podman exec` with Podman.) The login is needed again
+when it expires: the bot then answers that the CLI is not logged in in the
+container.
 
 `site-content-bot check` in the container reports whether everything is in
-place: the platform chosen, each variable, the repository, the config, the
-platform's API, the claude login.
+place: the platform chosen, the language model, each variable, the
+repository, the config, the platform's API, the model CLI's login.
+
+## The language model
+
+`CONTENT_BOT_LLM` chooses the CLI that answers; the container has both, so
+switching is a change in `.env` and a restart.
+
+| | `claude` (default) | `codex` |
+|---|---|---|
+| Login | a Claude subscription: `claude`, then `/login` | a ChatGPT login: `codex login --device-auth` (or an OpenAI key: `codex login --with-api-key`) |
+| Model | `CONTENT_BOT_MODEL`, default `claude-opus-5-5` | `CONTENT_BOT_MODEL`, default codex's own |
+| Reads the copies with | `Read`, `Glob`, `Grep` only; every other tool denied | read-only shell commands in a read-only sandbox, no approvals, no network |
+| Runs in | a throwaway directory, so no project `CLAUDE.md` is read | a throwaway directory, so no project `AGENTS.md` is read; user config ignored |
+
+Both answer the same JSON schema; the edit rules, the guard and everything
+after are the same. The logins live in the `/data` volume (`HOME`).
 
 **The login** is the platform's (so the company's login): **Log in with
 GitLab** or **Log in with GitHub** goes there and back. A member of the project
@@ -217,13 +234,14 @@ In `tools/content-bot/.env` on the host, never in the repository; `init` writes 
 | `CONTENT_BOT_URL` | the bot as the browser reaches it; the platform sends the login back to `<it>/auth/callback` |
 | `CONTENT_BOT_OAUTH_ID`, `CONTENT_BOT_OAUTH_SECRET` | the OAuth application |
 | `CONTENT_BOT_MIN_ACCESS` | the access a person needs, default `30` (Developer on GitLab, the write role on GitHub) |
-| `CONTENT_BOT_MODEL` | default `claude-opus-5-5` |
+| `CONTENT_BOT_LLM` | `claude` (default) or `codex` |
+| `CONTENT_BOT_MODEL` | the chosen CLI's model; default `claude-opus-5-5` for claude, codex's own for codex |
 | `CONTENT_BOT_ENGINE` | the container engine: `docker`, `podman` or `podman-compose` (`init` writes it) |
 | `CONTENT_BOT_HOST_PORT` | the host port the compose file publishes, default `8290` |
 | `CONTENT_BOT_PORT` | the port the bot listens on inside the container, default `8290` |
 | `CONTENT_BOT_REPO_DIR` | the clone, default `/data/repo` |
 | `CONTENT_BOT_SITE_DIR` | the copies, default `/data/site` |
-| `CLAUDE_EXECUTABLE` | default `claude` |
+| `CLAUDE_EXECUTABLE`, `CODEX_EXECUTABLE` | default `claude`, `codex` |
 
 The test and production URLs, the build and the checks are the config's
 `urls`, `build` and `checks`; `serve` refuses to start while
@@ -233,7 +251,7 @@ names of the first version, `CONTENT_BOT_GITLAB_TOKEN`, `GITLAB_URL` and
 `CONTENT_BOT_GITLAB_PROJECT`, are refused the same way, naming the new name.
 
 The container's `/data` volume holds the clone, the copies the model reads and
-the claude login (`HOME`). The pipeline states come from the platform, by the
+the model CLIs' logins (`HOME`). The pipeline states come from the platform, by the
 jobs named in the config's `deploy`.
 
 ## The command
@@ -246,12 +264,12 @@ site-content-bot init  [--dir <path>]      the wizard: set the bot up for the si
 
 `--config` names a config file instead of the one at the clone's root (for a
 local run). As a library, `import { createApp, ContentBot, Repo, Site,
-createPlatform, gitlabPlatform, githubPlatform, askClaude, loadConfig } from
+createPlatform, gitlabPlatform, githubPlatform, askClaude, askCodex, loadConfig } from
 'site-content-bot'` gives the parts.
 
 ## Developing
 
-`pnpm test` builds and runs the tests against `dist/`, with a fake claude, a
+`pnpm test` builds and runs the tests against `dist/`, with a fake claude, a fake codex, a
 fake GitLab, a fake GitHub and a bare repository as origin. Locally, with the variables above
 and a clone directory in `CONTENT_BOT_REPO_DIR`:
 

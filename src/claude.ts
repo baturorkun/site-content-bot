@@ -41,6 +41,7 @@ const short = (text: unknown): string => String(text).replace(/\s+/g, ' ').trim(
 
 export interface AskOptions {
   executable?: string;
+  // Empty: the CLI's own default (codex); claude always gets one.
   model: string;
   prompt: string;
   schema: unknown;
