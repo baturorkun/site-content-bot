@@ -1,4 +1,4 @@
-// The HTTP side: the page, the GitLab login (OAuth, to GitLab and back), the
+// The HTTP side: the page, the login (OAuth, to the platform and back), the
 // session cookie and the JSON API the page uses. createApp() wires it from
 // its parts (so a test can hand it fakes); serve() in cli.ts builds the parts
 // from the environment and the site's config.
@@ -7,17 +7,16 @@ import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ACCESS, type GitLabAuth } from './auth.js';
 import type { ContentBot, Session } from './bot.js';
 import type { Config } from './config.js';
-import type { DeployState } from './gitlab.js';
+import type { Auth, DeployState } from './platform.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // The page ships beside dist/: assets/page.html.
 export const PAGE_FILE = join(HERE, '..', 'assets', 'page.html');
 const COOKIE = 'content_bot_session';
 // The OAuth state between /auth/login and /auth/callback. Lax: the callback is
-// a navigation from GitLab, which a Strict cookie would not come with.
+// a navigation from the platform, which a Strict cookie would not come with.
 const STATE_COOKIE = 'content_bot_login';
 const MAX_BODY = 64 * 1024;
 
@@ -51,7 +50,9 @@ const CHAT_ID = /^[\w-]{1,64}$/;
 
 const escapeHtml = (text: string): string => text.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
 
-export interface Login { host: string; project: string; minAccess: number }
+// The login's facts for the page: the platform's name ('GitLab', 'GitHub'),
+// its host, the project and the access a person needs, as the platform names it.
+export interface Login { platform: string; host: string; project: string; access: string }
 
 // The page with the site's brand and the login's facts filled in, once.
 export const renderPage = (template: string, config: Config, login: Login): string => {
@@ -60,15 +61,16 @@ export const renderPage = (template: string, config: Config, login: Login): stri
     mark: config.brand.mark,
     name: config.brand.name,
     subtitle: config.brand.subtitle,
-    gitlabHost: login.host,
+    platform: login.platform,
+    host: login.host,
     project: login.project,
-    access: ACCESS[login.minAccess] ?? `level ${login.minAccess}`,
+    access: login.access,
   };
   return template.replace(/\{\{(\w+)\}\}/g, (whole, key: string) => (key in values ? escapeHtml(values[key]!) : whole));
 };
 
 export interface AppOptions {
-  auth: GitLabAuth;
+  auth: Auth;
   bot: ContentBot;
   deploy: (sha: string) => Promise<DeployState>;
   config: Config;
@@ -83,7 +85,7 @@ type Route = (request: IncomingMessage, response: ServerResponse, session: Sessi
 export const createApp = ({ auth, bot, deploy, config, llm, login, pageFile = PAGE_FILE }: AppOptions): Server => {
   const sessions = new Map<string, Session>();
   const page = renderPage(readFileSync(pageFile, 'utf8'), config, login);
-  const me = { testUrl: config.urls.test, prodUrl: config.urls.production, llm, brand: config.brand, policy: bot.policy.label };
+  const me = { testUrl: config.urls.test, prodUrl: config.urls.production, llm, brand: config.brand, policy: bot.policy.label, platform: login.platform };
 
   const routes: Record<string, Route> = {
     'POST /api/logout': async (request, response, session, token) => {
@@ -133,7 +135,7 @@ export const createApp = ({ auth, bot, deploy, config, llm, login, pageFile = PA
         response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
         return response.end(page);
       }
-      // The login: to GitLab and back; a failure comes back to the page as ?login_error=.
+      // The login: to the platform and back; a failure comes back to the page as ?login_error=.
       if (request.method === 'GET' && url.pathname === '/auth/login') {
         const { state, location } = auth.start();
         response.writeHead(302, { Location: location, 'Cache-Control': 'no-store', 'Set-Cookie': `${STATE_COOKIE}=${state}; HttpOnly; SameSite=Lax; Path=/auth; Max-Age=600` });
@@ -142,7 +144,7 @@ export const createApp = ({ auth, bot, deploy, config, llm, login, pageFile = PA
       if (request.method === 'GET' && url.pathname === '/auth/callback') {
         const clear = `${STATE_COOKIE}=; HttpOnly; SameSite=Lax; Path=/auth; Max-Age=0`;
         try {
-          if (url.searchParams.get('error')) throw new Error(url.searchParams.get('error_description') || `GitLab said: ${url.searchParams.get('error')}`);
+          if (url.searchParams.get('error')) throw new Error(url.searchParams.get('error_description') || `${login.platform} said: ${url.searchParams.get('error')}`);
           const user = await auth.finish({ code: url.searchParams.get('code'), state: url.searchParams.get('state'), cookieState: cookieOf(request, STATE_COOKIE) });
           const token = randomBytes(32).toString('hex');
           sessions.set(token, { user, chats: new Map(), proposal: undefined });

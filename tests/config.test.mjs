@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ConfigError, DEFAULT_EXCLUDE, globToRegExp, loadConfig, validateConfig } from '../dist/index.js';
+import { ConfigError, DEFAULT_DEPLOY, DEFAULT_EXCLUDE, globToRegExp, loadConfig, validateConfig } from '../dist/index.js';
 
 const work = mkdtempSync(join(tmpdir(), 'content-bot-config-'));
 process.on('exit', () => rmSync(work, { recursive: true, force: true }));
@@ -28,6 +28,7 @@ test('the init example loads, with every field', async () => {
   assert.equal(config.build.output, 'dist');
   assert.deepEqual(config.exclude, DEFAULT_EXCLUDE);
   assert.match(config.layout, /layout, code and styles/);
+  assert.deepEqual(config.deploy, { test: 'deploy_linux', production: 'deploy_release' });
 });
 
 test('the defaults: mark from the initials, title Content Bot, subtitle from the name, exclude, version aifactory', () => {
@@ -37,6 +38,8 @@ test('the defaults: mark from the initials, title Content Bot, subtitle from the
   assert.equal(config.version, 'aifactory');
   assert.equal(config.layout, undefined);
   assert.deepEqual(config.editable, [{ path: 'src/texts.ts', kind: 'text' }]);
+  assert.deepEqual(config.deploy, DEFAULT_DEPLOY);
+  assert.deepEqual(validateConfig({ ...minimal(), deploy: { test: 'build-test', production: 'deploy' } }).deploy, { test: 'build-test', production: 'deploy' });
 });
 
 test('each required field missing or wrong is refused with the field named', () => {
@@ -66,7 +69,10 @@ test('each required field missing or wrong is refused with the field named', () 
   refuse((c) => { delete c.urls; }, /urls must be an object/);
   refuse((c) => { c.urls.test = 'test.example'; }, /urls\.test must be an http\(s\) URL/);
   refuse((c) => { c.urls.staging = 'https://x'; }, /urls\.staging is not a field/);
-  refuse((c) => { c.testUrl = 'https://x'; }, /testUrl is not a field \(the fields are brand, editable, layout, exclude, build, checks, version, urls\)/);
+  refuse((c) => { c.testUrl = 'https://x'; }, /testUrl is not a field \(the fields are brand, editable, layout, exclude, build, checks, version, urls, deploy\)/);
+  refuse((c) => { c.deploy = 'deploy_linux'; }, /deploy must be an object \{ test, production \}/);
+  refuse((c) => { c.deploy = { test: 'a' }; }, /deploy\.production must be a non-empty string/);
+  refuse((c) => { c.deploy = { test: 'a', production: 'b', staging: 'c' }; }, /deploy\.staging is not a field \(test, production\)/);
   // A function is a version; a rule on an svg-text entry is dropped (its rule is fixed).
   const fn = async () => '1.2.3';
   assert.equal(validateConfig({ ...minimal(), version: fn }).version, fn);

@@ -11,7 +11,7 @@ import type { User } from './auth.js';
 import type { Ask } from './claude.js';
 import type { Config } from './config.js';
 import { applyFileEdits, Editable, type Edit } from './edits.js';
-import type { DeployState } from './gitlab.js';
+import type { DeployState } from './platform.js';
 import { BOT_TRAILER, type BotChange, type Repo } from './repo.js';
 import type { Context, Site } from './site.js';
 import { onlyTextChanged } from './svg.js';
@@ -38,8 +38,12 @@ export const ANSWER_SCHEMA = {
 
 const HISTORY_TURNS = 10;
 const CHANGES_SHOWN = 15;
-// Who may release: Maintainer and above, as GitLab's protected v* tags allow.
+// Who may release: Maintainer and above (maintain on GitHub), as protected v*
+// tags allow.
 export const RELEASE_ACCESS = 40;
+// The platform as the messages name it, and who may release, when the bot is
+// not told (platform.ts): GitLab's.
+export const DEFAULT_PLATFORM = { name: 'GitLab', releaseRole: 'a Maintainer or Owner of the project' };
 
 const version = (tag: string | undefined) => tag?.match(VERSION)?.slice(1).map(Number);
 const newer = (a: string, b: string | undefined): boolean => {
@@ -87,7 +91,7 @@ ${editable.describe()}
 - "summary": the change in a few English words, for the commit message ("" when
   there are no edits).`;
 
-const directories = (context: Context, config: Config, editable: Editable): string => {
+const directories = (context: Context, config: Config, editable: Editable, platformName: string): string => {
   const texts = editable.entries.map((entry) => entry.path ?? entry.glob).join(', ');
   const lines = [
     `- MAIN = ${context.main}: the repository on main as it is now (commit ${context.sha.slice(0, 8)}). Editable: ${texts}${config.layout ? `; ${config.layout}` : ''}.`,
@@ -99,14 +103,14 @@ const directories = (context: Context, config: Config, editable: Editable): stri
   if (production?.dir) {
     lines.push(`- PRODUCTION = ${production.dir}: the sources of release ${production.tag} (commit ${production.commit.slice(0, 8)}), what ${config.urls.production} serves; main is ${production.ahead} commit(s) ahead of it.`);
   } else {
-    lines.push(`- PRODUCTION: not available (${production === null ? 'there is no GitLab Release yet' : production?.error ?? 'unknown'}).`);
+    lines.push(`- PRODUCTION: not available (${production === null ? `there is no ${platformName} Release yet` : production?.error ?? 'unknown'}).`);
   }
   return lines.join('\n');
 };
 
-const prompt = ({ history, message, context, config, editable }: { history: Turn[]; message: string; context: Context; config: Config; editable: Editable }): string => [
+const prompt = ({ history, message, context, config, editable, platformName }: { history: Turn[]; message: string; context: Context; config: Config; editable: Editable; platformName: string }): string => [
   instructions(config, editable),
-  `\nThe directories (read-only copies):\n${directories(context, config, editable)}`,
+  `\nThe directories (read-only copies):\n${directories(context, config, editable, platformName)}`,
   history.length ? `\nThe conversation so far:\n${history.map((turn) => `${turn.role}: ${turn.text}`).join('\n')}` : '',
   `\nThe user's request now:\n${message}`,
 ].join('\n');
@@ -139,6 +143,8 @@ export interface ContentBotOptions {
   config: Config;
   deploy?: (sha: string) => Promise<DeployState>;
   releases: Releases;
+  // The platform's name and who may release there, for the prompt and the messages.
+  platform?: { name: string; releaseRole: string };
 }
 
 export class ContentBot {
@@ -151,6 +157,7 @@ export class ContentBot {
   policy: VersionPolicy;
   deploy: (sha: string) => Promise<DeployState>;
   releases: Releases;
+  platform: { name: string; releaseRole: string };
   urls: { testUrl: string; prodUrl: string };
   busy: Promise<unknown>;
   finalStates: Map<string, { state: string; pipeline?: string }>;
@@ -159,7 +166,7 @@ export class ContentBot {
   // its checks (a shell command run in the clone), its editable files, its
   // URLs and its version policy; site: site.ts; deploy: (sha) => the pipeline
   // state (gitlab.ts); releases: candidate/create/state (above).
-  constructor({ repo, ask, site, config, deploy = async () => ({ state: 'unknown' }), releases }: ContentBotOptions) {
+  constructor({ repo, ask, site, config, deploy = async () => ({ state: 'unknown' }), releases, platform = DEFAULT_PLATFORM }: ContentBotOptions) {
     this.repo = repo;
     this.ask = ask;
     this.site = site;
@@ -169,6 +176,7 @@ export class ContentBot {
     this.policy = versionPolicy(config.version);
     this.deploy = deploy;
     this.releases = releases;
+    this.platform = platform;
     this.urls = { testUrl: config.urls.test, prodUrl: config.urls.production };
     this.busy = Promise.resolve();
     this.finalStates = new Map();
@@ -188,7 +196,7 @@ export class ContentBot {
       return this.site.context();
     });
     const dirs = [context.main, context.test, (context.production as any)?.dir].filter(Boolean) as string[];
-    const answer = await this.ask(prompt({ history: history.slice(-HISTORY_TURNS), message, context, config: this.config, editable: this.editable }), ANSWER_SCHEMA, dirs);
+    const answer = await this.ask(prompt({ history: history.slice(-HISTORY_TURNS), message, context, config: this.config, editable: this.editable, platformName: this.platform.name }), ANSWER_SCHEMA, dirs);
     const edits: Edit[] = Array.isArray(answer.edits) ? answer.edits : [];
     history.push({ role: 'user', text: message }, { role: 'assistant', text: answer.reply });
     if (!edits.length) {
@@ -330,26 +338,27 @@ export class ContentBot {
         policy: this.policy.label,
       };
     });
-    // Nothing to release: production already runs this version or this commit.
+    // Nothing to release: nothing has been pushed to main since production's
+    // release, or the policy gives the version production already runs.
     const unchanged = !preview.candidate ? null
-      : preview.production?.tag === preview.next ? `No changes to release: production already runs ${preview.next}. ${this.policy.unchangedHint}`
-        : !preview.changes.length ? `No changes to release: nothing has changed since ${preview.production.tag}.` : null;
+      : !preview.changes.length ? `No changes to release: production already runs ${preview.production.tag} and nothing has been pushed to main since.`
+        : preview.production?.tag === preview.next ? `No changes to release: production already runs ${preview.next}. ${this.policy.unchangedHint}` : null;
     if (unchanged) return { ...preview, canRelease: false, unchanged, reason: unchanged };
     const allowed = (user.accessLevel ?? 0) >= RELEASE_ACCESS;
-    return { ...preview, canRelease: allowed, ...(allowed ? {} : { reason: 'Only a Maintainer or Owner of the project can release.' }) };
+    return { ...preview, canRelease: allowed, ...(allowed ? {} : { reason: `Only ${this.platform.releaseRole} can release.` }) };
   }
 
-  // Makes the GitLab Release (and its tag) at the commit the user saw, titled
+  // Makes the Release (and its tag) at the commit the user saw, titled
   // with its version; the tag pipeline then deploys it to production.
   async release(user: User, { tag, sha }: { tag?: string; sha?: string }): Promise<{ tag: string; url: string }> {
-    if ((user.accessLevel ?? 0) < RELEASE_ACCESS) throw Object.assign(new Error('Only a Maintainer or Owner of the project can release.'), { status: 403 });
+    if ((user.accessLevel ?? 0) < RELEASE_ACCESS) throw Object.assign(new Error(`Only ${this.platform.releaseRole} can release.`), { status: 403 });
     if (!VERSION.test(tag ?? '')) throw Object.assign(new Error('The version must look like v1.2.3.'), { status: 400 });
     const preview = await this.releasePreview(user);
     if (!preview.candidate) throw new Error('No main pipeline has passed yet; there is nothing to release.');
     if (preview.candidate.sha !== sha) throw new Error('The test site has moved on since you looked; look again.');
     if (!preview.changes.length) throw new Error(`Nothing has changed since ${preview.production.tag}.`);
     if (tag !== preview.next) throw Object.assign(new Error(`The version is fixed: ${preview.next} (${this.policy.label}).`), { status: 400 });
-    if (preview.production?.tag === tag) throw Object.assign(new Error(`${tag} is already in production. ${this.policy.unchangedHint}`), { status: 409 });
+    if (preview.production?.tag === tag) throw Object.assign(new Error(`${tag} is already in production; nothing has changed since.`), { status: 409 });
     if (preview.production && !newer(tag!, preview.production.tag)) throw Object.assign(new Error(`${tag} is not newer than ${preview.production.tag}, which production serves.`), { status: 400 });
     const description = [
       `Released from ${this.config.brand.title} by ${user.name} <${user.email}>.`,

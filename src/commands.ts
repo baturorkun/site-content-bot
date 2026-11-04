@@ -7,12 +7,11 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { GitLabAuth } from './auth.js';
 import { ContentBot } from './bot.js';
 import { askClaude } from './claude.js';
 import { CONFIG_FILE, loadConfig, type Config } from './config.js';
 import { Editable } from './edits.js';
-import { createRelease, deployState, lastGreenMain, latestRelease, projectReachable } from './gitlab.js';
+import { createPlatform, platformOf, type PlatformName } from './platform.js';
 import { Repo } from './repo.js';
 import { createApp } from './server.js';
 import { Site } from './site.js';
@@ -37,34 +36,58 @@ Options:
 
 const version = (): string => (JSON.parse(readFileSync(join(HERE, '..', 'package.json'), 'utf8')) as { version: string }).version;
 
-// The variables, as the README lists them. Removed ones name the config field that took over.
-const REQUIRED = ['CONTENT_BOT_REPO_URL', 'CONTENT_BOT_GITLAB_TOKEN', 'GITLAB_URL', 'CONTENT_BOT_URL', 'CONTENT_BOT_OAUTH_ID', 'CONTENT_BOT_OAUTH_SECRET', 'CONTENT_BOT_GITLAB_PROJECT'];
+// The variables, as the README lists them. Removed ones name the config field
+// that took over; renamed ones (the GitLab names of RQ-0001) their new name.
+// CONTENT_BOT_PLATFORM_URL is required on GitLab (the instance) and defaults
+// to github.com on GitHub.
+const REQUIRED = ['CONTENT_BOT_REPO_URL', 'CONTENT_BOT_TOKEN', 'CONTENT_BOT_URL', 'CONTENT_BOT_OAUTH_ID', 'CONTENT_BOT_OAUTH_SECRET', 'CONTENT_BOT_PROJECT'];
+const PLATFORM_URL = 'CONTENT_BOT_PLATFORM_URL';
+const GITHUB_URL = 'https://github.com';
 const REMOVED: Record<string, string> = {
   CONTENT_BOT_TEST_URL: 'urls.test',
   CONTENT_BOT_PROD_URL: 'urls.production',
   CONTENT_BOT_BUILD: 'build.command',
   CONTENT_BOT_CHECKS: 'checks',
 };
+const RENAMED: Record<string, string> = {
+  CONTENT_BOT_GITLAB_TOKEN: 'CONTENT_BOT_TOKEN',
+  GITLAB_URL: PLATFORM_URL,
+  CONTENT_BOT_GITLAB_PROJECT: 'CONTENT_BOT_PROJECT',
+};
 
 class Usage extends Error {}
 
-const removedVariables = (env: NodeJS.ProcessEnv): string[] => Object.keys(REMOVED).filter((name) => env[name] !== undefined && env[name] !== '');
+const isSet = (env: NodeJS.ProcessEnv, name: string): boolean => env[name] !== undefined && env[name] !== '';
+const removedVariables = (env: NodeJS.ProcessEnv): string[] => Object.keys(REMOVED).filter((name) => isSet(env, name));
+const renamedVariables = (env: NodeJS.ProcessEnv): string[] => Object.keys(RENAMED).filter((name) => isSet(env, name));
 
-const settings = (env: NodeJS.ProcessEnv) => ({
-  repoUrl: env.CONTENT_BOT_REPO_URL ?? '',
-  token: env.CONTENT_BOT_GITLAB_TOKEN ?? '',
-  gitlabUrl: env.GITLAB_URL ?? '',
-  botUrl: env.CONTENT_BOT_URL ?? '',
-  oauthId: env.CONTENT_BOT_OAUTH_ID ?? '',
-  oauthSecret: env.CONTENT_BOT_OAUTH_SECRET ?? '',
-  project: env.CONTENT_BOT_GITLAB_PROJECT ?? '',
-  minAccess: Number(env.CONTENT_BOT_MIN_ACCESS || 30),
-  model: env.CONTENT_BOT_MODEL || 'claude-opus-5-5',
-  siteDir: env.CONTENT_BOT_SITE_DIR || '/data/site',
-  repoDir: env.CONTENT_BOT_REPO_DIR || '/data/repo',
-  port: Number(env.CONTENT_BOT_PORT || 8290),
-  claude: env.CLAUDE_EXECUTABLE || 'claude',
-});
+const settings = (env: NodeJS.ProcessEnv) => {
+  const repoUrl = env.CONTENT_BOT_REPO_URL ?? '';
+  const chosen = platformOf(env.CONTENT_BOT_PLATFORM || undefined, repoUrl);
+  return {
+    repoUrl,
+    platform: chosen.platform,
+    platformFrom: chosen.from,
+    token: env.CONTENT_BOT_TOKEN ?? '',
+    platformUrl: env[PLATFORM_URL] || (chosen.platform === 'github' ? GITHUB_URL : ''),
+    botUrl: env.CONTENT_BOT_URL ?? '',
+    oauthId: env.CONTENT_BOT_OAUTH_ID ?? '',
+    oauthSecret: env.CONTENT_BOT_OAUTH_SECRET ?? '',
+    project: env.CONTENT_BOT_PROJECT ?? '',
+    minAccess: Number(env.CONTENT_BOT_MIN_ACCESS || 30),
+    model: env.CONTENT_BOT_MODEL || 'claude-opus-5-5',
+    siteDir: env.CONTENT_BOT_SITE_DIR || '/data/site',
+    repoDir: env.CONTENT_BOT_REPO_DIR || '/data/repo',
+    port: Number(env.CONTENT_BOT_PORT || 8290),
+    claude: env.CLAUDE_EXECUTABLE || 'claude',
+  };
+};
+
+// The variables that must be set for the platform chosen.
+const required = (platform: PlatformName): string[] => (platform === 'gitlab' ? [...REQUIRED, PLATFORM_URL] : REQUIRED);
+
+// The user name git gives beside the token: oauth2 on GitLab, x-access-token on GitHub.
+const gitUser = (platform: PlatformName): string => (platform === 'github' ? 'x-access-token' : 'oauth2');
 
 // git's GIT_ASKPASS: the token from the environment, never in the remote URL.
 // The script is copied where it can be executable, whatever the package's mode.
@@ -78,7 +101,7 @@ const askpass = (): string => {
 
 const makeRepo = (env: NodeJS.ProcessEnv): Repo => {
   const s = settings(env);
-  return new Repo({ dir: s.repoDir, url: s.repoUrl, env: s.token ? { GIT_ASKPASS: askpass(), CONTENT_BOT_GITLAB_TOKEN: s.token } : {} });
+  return new Repo({ dir: s.repoDir, url: s.repoUrl, env: s.token ? { GIT_ASKPASS: askpass(), CONTENT_BOT_TOKEN: s.token, CONTENT_BOT_GIT_USER: gitUser(s.platform) } : {} });
 };
 
 // The config: --config, else the file at the clone's root.
@@ -88,42 +111,49 @@ const refuse = (message: string): never => {
   throw new Usage(message);
 };
 
+const renamedMessage = (name: string): string => `${name} is now ${RENAMED[name]}`;
+
+// The platform from the settings: GitLab or GitHub, with the login's facts.
+const makePlatform = (s: ReturnType<typeof settings>) => createPlatform(s.platform, {
+  url: s.platformUrl,
+  project: s.project,
+  token: s.token,
+  clientId: s.oauthId,
+  secret: s.oauthSecret,
+  redirectUri: `${s.botUrl.replace(/\/$/, '')}/auth/callback`,
+  minAccess: s.minAccess,
+});
+
 export const serve = async (env: NodeJS.ProcessEnv, { configPath }: { configPath?: string } = {}): Promise<void> => {
   const removed = removedVariables(env);
   if (removed.length) refuse(`${removed.map((name) => `${name} has moved to ${CONFIG_FILE} (${REMOVED[name]})`).join('; ')}; unset ${removed.length === 1 ? 'it' : 'them'}.`);
-  const missing = REQUIRED.filter((name) => !env[name]);
-  if (missing.length) refuse(`${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} empty (see README.md).`);
+  const renamed = renamedVariables(env);
+  if (renamed.length) refuse(`${renamed.map(renamedMessage).join('; ')}; rename ${renamed.length === 1 ? 'it' : 'them'}.`);
   const s = settings(env);
+  const missing = required(s.platform).filter((name) => !env[name]);
+  if (missing.length) refuse(`${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} empty (see README.md).`);
   const repo = makeRepo(env);
   await repo.sync();
   const config = await configOf(repo, configPath);
-  const gitlab = { url: s.gitlabUrl, project: s.project, token: s.token };
-  const deploy = (sha: string) => deployState({ ...gitlab, sha });
-  const site = new Site({ repo, root: s.siteDir, build: config.build, exclude: config.exclude, latestRelease: () => latestRelease(gitlab) });
+  const platform = makePlatform(s);
+  const deploy = (sha: string) => platform.deployState({ sha, job: config.deploy.test });
+  const site = new Site({ repo, root: s.siteDir, build: config.build, exclude: config.exclude, latestRelease: () => platform.latestRelease() });
   const bot = new ContentBot({
     repo,
     site,
     config,
     deploy,
+    platform: { name: platform.name, releaseRole: platform.releaseRole },
     releases: {
-      candidate: () => lastGreenMain(gitlab),
-      create: (release) => createRelease({ ...gitlab, ...release }),
-      state: (tag) => deployState({ ...gitlab, ref: tag, job: 'deploy_release' }),
+      candidate: () => platform.lastGreenMain(config.deploy.test),
+      create: (release) => platform.createRelease(release),
+      state: (tag) => platform.deployState({ ref: tag, job: config.deploy.production }),
     },
     ask: (prompt, schema, dirs) => askClaude({ executable: s.claude, model: s.model, prompt, schema, dirs }),
   });
-  const auth = new GitLabAuth({
-    url: s.gitlabUrl,
-    clientId: s.oauthId,
-    secret: s.oauthSecret,
-    redirectUri: `${s.botUrl.replace(/\/$/, '')}/auth/callback`,
-    project: s.project,
-    token: s.token,
-    minAccess: s.minAccess,
-  });
-  const login = { host: new URL(s.gitlabUrl).host, project: s.project, minAccess: s.minAccess };
-  createApp({ auth, bot, deploy, config, login, llm: { provider: 'claude-cli (subscription)', model: s.model } })
-    .listen(s.port, () => console.log(`${config.brand.title}: listening on :${s.port}, model ${s.model}, GitLab login for ${s.project} (access level ${s.minAccess}+), ${config.brand.name}`));
+  const login = { platform: platform.name, host: platform.host, project: s.project, access: platform.accessName(s.minAccess) };
+  createApp({ auth: platform.auth, bot, deploy, config, login, llm: { provider: 'claude-cli (subscription)', model: s.model } })
+    .listen(s.port, () => console.log(`${config.brand.title}: listening on :${s.port}, model ${s.model}, ${platform.name} login for ${s.project} at ${platform.host} (${login.access} access or above; platform from ${s.platformFrom}), ${config.brand.name}`));
 };
 
 const lsRemote = (repo: Repo): Promise<void> => new Promise((resolvePromise, reject) => {
@@ -152,9 +182,17 @@ export const check = async (env: NodeJS.ProcessEnv, { configPath, out = console.
     }
   };
 
-  for (const name of REQUIRED) report(Boolean(env[name]), `${name} is set`);
+  let s: ReturnType<typeof settings>;
+  try {
+    s = settings(env);
+  } catch (error) {
+    report(false, 'the platform is known', String(error?.message ?? error));
+    return false;
+  }
+  report(true, `the platform is ${s.platform === 'github' ? 'GitHub' : 'GitLab'}`, `from ${s.platformFrom}${s.platform === 'github' && !env[PLATFORM_URL] ? `; ${PLATFORM_URL} defaults to ${GITHUB_URL}` : ''}`);
+  for (const name of required(s.platform)) report(Boolean(env[name]), `${name} is set`);
   for (const name of removedVariables(env)) report(false, `${name} is not set`, `it has moved to ${CONFIG_FILE} (${REMOVED[name]})`);
-  const s = settings(env);
+  for (const name of renamedVariables(env)) report(false, `${name} is not set`, renamedMessage(name));
   const repo = makeRepo(env);
   if (s.repoUrl) await tryIt(`the repository ${s.repoUrl} answers the token`, () => lsRemote(repo));
   const configFile = configPath ?? join(repo.dir, CONFIG_FILE);
@@ -163,7 +201,10 @@ export const check = async (env: NodeJS.ProcessEnv, { configPath, out = console.
     return `${loaded.brand.name}; ${editable.summary()}; version: ${versionPolicy(loaded.version).label}`;
   });
   void config;
-  if (s.gitlabUrl && s.project && s.token) await tryIt(`GitLab's API answers for ${s.project}`, () => projectReachable({ url: s.gitlabUrl, project: s.project, token: s.token }), (path) => path);
+  if (s.platformUrl && s.project && s.token) {
+    const platform = makePlatform(s);
+    await tryIt(`${platform.name}'s API answers for ${s.project}`, () => platform.projectReachable(), (path) => path);
+  }
   await tryIt(`${s.claude} answers (logged in)`, () => askClaude({
     executable: s.claude,
     model: s.model,

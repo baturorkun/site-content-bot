@@ -1,18 +1,18 @@
 # site-content-bot
 
 A chat that reads a website's repository and changes its texts. A person logs
-in with GitLab, asks about the site or writes what should change, in Turkish,
+in with GitLab or GitHub, asks about the site or writes what should change, in Turkish,
 English or any other language, and the bot answers in the language they wrote
 in. A change is shown as old and new text side by side; **Apply** pushes it to
 main as one commit authored by the person, and the site's own pipeline deploys
 it to the test domain. **Recent changes** lists the bot's commits with where
 each one is (pipeline, test site, production), **Undo** reverts the latest one
 the same way, and **Release…** (Maintainers and Owners) ships what the test
-site serves to production as a GitLab Release with a version the site's rule
+site serves to production as a Release with a version the site's rule
 fixes.
 
 - **It reads, read-only:** a copy of main, the test site built from it the way
-  CI builds it, and the sources of the latest GitLab Release (production). The
+  CI builds it, and the sources of the latest Release (production). The
   copies are made once per commit or tag, under `CONTENT_BOT_SITE_DIR`.
 - **It changes** only the files the site lists as editable: text files under a
   rule the site writes, and the text inside `<text>`/`<tspan>` of SVG
@@ -44,12 +44,14 @@ the bot:
 
 1. `tools/content-bot/.env` from `.env.example` (the variables below). Git
    ignores `.env`; it never enters the repository.
-2. The GitLab OAuth application, once (a group's or the instance's Settings >
-   Applications): name `Content Bot`, redirect URI
-   `<CONTENT_BOT_URL>/auth/callback`, confidential, scope `read_user`. Its
-   Application ID and Secret go into `.env`.
-3. A project access token of the site's project, role Maintainer, scopes
-   `write_repository`, `read_api` and `api` (the releases), into `.env`.
+2. The OAuth application, once, with the callback URL
+   `<CONTENT_BOT_URL>/auth/callback`. On GitLab: a group's or the instance's
+   Settings > Applications, name `Content Bot`, confidential, scope
+   `read_user`. On GitHub: Settings > Developer settings > OAuth Apps (of the
+   organisation or a person). Its ID and Secret go into `.env`.
+3. The bot's token, into `.env`. On GitLab: a project access token of the
+   site's project, role Maintainer, scopes `write_repository`, `read_api` and
+   `api` (the releases). On GitHub: see *On GitHub* below.
 4. `docker compose -f tools/content-bot/compose.yaml up -d --build`
 5. The claude login, once (and again when the session expires: the bot then
    answers "Claude is not logged in in the container"):
@@ -61,15 +63,48 @@ the bot:
    then `/login` in it, and leave with `/exit`.
 
 `site-content-bot check` in the container reports whether everything is in
-place: each variable, the repository, the config, GitLab's API, the claude
-login.
+place: the platform chosen, each variable, the repository, the config, the
+platform's API, the claude login.
 
-**The login** is GitLab's (so the company's login): **Log in with GitLab**
-goes to GitLab and back. A member of the project (`CONTENT_BOT_GITLAB_PROJECT`)
-with Developer access or above (`CONTENT_BOT_MIN_ACCESS`) comes in; their
-GitLab name and e-mail become the author of the commits they ask for. Who may
-use the bot is decided by the project's members on GitLab; the bot keeps no
+**The login** is the platform's (so the company's login): **Log in with
+GitLab** or **Log in with GitHub** goes there and back. A member of the project
+(`CONTENT_BOT_PROJECT`) with Developer access or above on GitLab, the write
+role or above on GitHub (`CONTENT_BOT_MIN_ACCESS`) comes in; their name and
+e-mail there become the author of the commits they ask for. Who may use the
+bot is decided by the project's members on the platform; the bot keeps no
 passwords.
+
+## The platform: GitLab or GitHub
+
+The bot runs against one platform, chosen by `CONTENT_BOT_PLATFORM` (`gitlab`
+or `github`) or, when that is empty, by the host of `CONTENT_BOT_REPO_URL`
+(`github.com`, or a host starting with `github.`, means GitHub). It gives the
+login, where a commit is on its way (a GitLab pipeline, a GitHub Actions run,
+and the deploy job named in the config's `deploy`), the latest Release (what
+production serves) and the Release the bot makes. Everything else is git.
+
+### On GitHub
+
+- **Login**: the OAuth App above; the bot asks for `read:user user:email` and
+  takes the primary verified e-mail. A collaborator's role on the repository
+  decides their access, on the same scale as GitLab's levels so
+  `CONTENT_BOT_MIN_ACCESS` means the same: `read` and `triage` 20 (they
+  cannot push, so they do not come in by default), `write` 30 (edits),
+  `maintain` 40 (releases too), `admin` 50.
+- **Token** (`CONTENT_BOT_TOKEN`): a fine-grained personal access token on the
+  repository with *Contents* read and write (the pushes, the releases),
+  *Actions* read (the run states) and *Metadata* read (the collaborators'
+  roles), or a classic token with `repo`. When a ruleset protects `v*` tags,
+  the token's owner must be allowed to bypass it, or **Release…** is refused
+  with GitHub's message.
+- **Deploy jobs**: `deploy.test` and `deploy.production` in the config are
+  the names of the Actions jobs (the `name:` of a job, or its key) that put
+  main on the test domain and a release tag on production. **Recent changes**
+  looks at the newest run of each commit; a release candidate is the newest
+  successful run on `main` that has the test job, so a green lint workflow
+  on a commit whose deploy failed does not count.
+- **GitHub Enterprise**: `CONTENT_BOT_PLATFORM_URL=https://github.company.com`;
+  the API is then `<it>/api/v3`. For github.com, leave it empty.
 
 ## The config: `content-bot.config.mjs`
 
@@ -98,6 +133,7 @@ export default {
   checks: 'pnpm install --frozen-lockfile --prefer-offline >/dev/null && node node_modules/typescript/bin/tsc --noEmit && node --test tests/prerender.test.mjs',
   version: 'aifactory',
   urls: { test: 'https://test.bytecraft.com.tr', production: 'https://bytecraft.com.tr' },
+  deploy: { test: 'deploy_linux', production: 'deploy_release' },
 };
 ```
 
@@ -111,6 +147,7 @@ export default {
 | `checks` | required | The site's checks, run in the clone before a push. A failure pushes nothing. |
 | `version` | optional | The next release's version: `aifactory` (default), `patch`, or a function (below). |
 | `urls` | required | `test` and `production`: what the test domain and production serve. |
+| `deploy` | optional | The deploy jobs of the site's pipeline: `test` puts main on the test domain, `production` a release tag on production (GitLab job names, GitHub Actions job names). Default `deploy_linux` and `deploy_release`. |
 
 ### Version policies
 
@@ -119,9 +156,10 @@ What **Release…** offers as the next version, fixed, not chosen:
 - `aifactory`: `1.<N>.<run>`, N the highest completed requirement under
   `requirements/` at the candidate commit, run the largest `retries` in that
   requirement's `completedRunId` manifest (the attempt counter), `1.0.0` with
-  none. The sidebar shows the requirement versions of main and production.
-  When production already runs that version, there is nothing to release
-  until the next requirement is completed.
+  none. Once that requirement has a release tag, the tag at a commit is its
+  version, and a later commit without a new requirement takes the newest such
+  tag's last number + 1. The sidebar shows the requirement versions of main
+  and production.
 - `patch`: production's tag with the patch number raised (`v1.0.0` with no
   release). Anything on main since the release is a new version.
 - A function `({ candidate, production, read }) => 'MAJOR.MINOR.PATCH'`:
@@ -142,13 +180,14 @@ In `tools/content-bot/.env` on the host, never in the repository:
 
 | Variable | |
 |---|---|
-| `CONTENT_BOT_REPO_URL` | the repository over HTTP, e.g. `https://gitlab.example.com/group/site.git` |
-| `CONTENT_BOT_GITLAB_TOKEN` | the project access token (Maintainer; `write_repository`, `read_api`, `api`); git gets it through `GIT_ASKPASS`, never through the URL |
-| `GITLAB_URL` | GitLab: the login, the pipeline status, the releases |
-| `CONTENT_BOT_GITLAB_PROJECT` | the project, e.g. `group/site` |
-| `CONTENT_BOT_URL` | the bot as the browser reaches it; GitLab sends the login back to `<it>/auth/callback` |
-| `CONTENT_BOT_OAUTH_ID`, `CONTENT_BOT_OAUTH_SECRET` | the GitLab OAuth application |
-| `CONTENT_BOT_MIN_ACCESS` | the project access level a person needs, default `30` (Developer) |
+| `CONTENT_BOT_REPO_URL` | the repository over HTTP, e.g. `https://gitlab.example.com/group/site.git` or `https://github.com/owner/site.git` |
+| `CONTENT_BOT_PLATFORM` | `gitlab` or `github`; empty: from the repository's host |
+| `CONTENT_BOT_PLATFORM_URL` | the platform: the GitLab instance (required there); GitHub, default `https://github.com` (set it for GitHub Enterprise) |
+| `CONTENT_BOT_PROJECT` | the project: `group/site` on GitLab, `owner/repo` on GitHub |
+| `CONTENT_BOT_TOKEN` | the bot's token (GitLab: a project access token, Maintainer, `write_repository`, `read_api`, `api`; GitHub: above); git gets it through `GIT_ASKPASS`, never through the URL |
+| `CONTENT_BOT_URL` | the bot as the browser reaches it; the platform sends the login back to `<it>/auth/callback` |
+| `CONTENT_BOT_OAUTH_ID`, `CONTENT_BOT_OAUTH_SECRET` | the OAuth application |
+| `CONTENT_BOT_MIN_ACCESS` | the access a person needs, default `30` (Developer on GitLab, the write role on GitHub) |
 | `CONTENT_BOT_MODEL` | default `claude-opus-5-5` |
 | `CONTENT_BOT_PORT` | default `8290` |
 | `CONTENT_BOT_REPO_DIR` | the clone, default `/data/repo` |
@@ -158,12 +197,13 @@ In `tools/content-bot/.env` on the host, never in the repository:
 The test and production URLs, the build and the checks are the config's
 `urls`, `build` and `checks`; `serve` refuses to start while
 `CONTENT_BOT_TEST_URL`, `CONTENT_BOT_PROD_URL`, `CONTENT_BOT_BUILD` or
-`CONTENT_BOT_CHECKS` is still set, naming the field each moved to.
+`CONTENT_BOT_CHECKS` is still set, naming the field each moved to. The GitLab
+names of the first version, `CONTENT_BOT_GITLAB_TOKEN`, `GITLAB_URL` and
+`CONTENT_BOT_GITLAB_PROJECT`, are refused the same way, naming the new name.
 
 The container's `/data` volume holds the clone, the copies the model reads and
-the claude login (`HOME`). The pipeline states come from GitLab: the job
-`deploy_linux` on main is the test domain's deploy, `deploy_release` on a
-release tag production's.
+the claude login (`HOME`). The pipeline states come from the platform, by the
+jobs named in the config's `deploy`.
 
 ## The command
 
@@ -175,12 +215,13 @@ site-content-bot init  [--dir <path>]      write what a site needs
 
 `--config` names a config file instead of the one at the clone's root (for a
 local run). As a library, `import { createApp, ContentBot, Repo, Site,
-GitLabAuth, askClaude, loadConfig } from 'site-content-bot'` gives the parts.
+createPlatform, gitlabPlatform, githubPlatform, askClaude, loadConfig } from
+'site-content-bot'` gives the parts.
 
 ## Developing
 
 `pnpm test` builds and runs the tests against `dist/`, with a fake claude, a
-fake GitLab and a bare repository as origin. Locally, with the variables above
+fake GitLab, a fake GitHub and a bare repository as origin. Locally, with the variables above
 and a clone directory in `CONTENT_BOT_REPO_DIR`:
 
 ```
