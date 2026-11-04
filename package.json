@@ -2,6 +2,24 @@
   "name": "site-content-bot",
   "version": "0.5.0",
   "description": "A chat that reads a website's repository and changes its texts: proposed edits, Apply pushes to main, Release ships to production.",
+  "keywords": [
+    "website",
+    "content",
+    "cms",
+    "chat",
+    "claude",
+    "codex",
+    "gitlab",
+    "github"
+  ],
+  "homepage": "https://github.com/baturorkun/site-content-bot#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/baturorkun/site-content-bot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/baturorkun/site-content-bot/issues"
+  },
   "type": "module",
   "exports": {
     ".": {
@@ -11,7 +29,7 @@
   },
   "types": "./dist/index.d.ts",
   "bin": {
-    "site-content-bot": "./dist/cli.js"
+    "site-content-bot": "dist/cli.js"
   },
   "files": [
     "dist",

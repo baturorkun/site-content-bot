@@ -296,6 +296,24 @@ local run). As a library, `import { createApp, ContentBot, Repo, Site,
 createPlatform, gitlabPlatform, githubPlatform, askClaude, askCodex, loadConfig } from
 'site-content-bot'` gives the parts.
 
+## Publishing
+
+For the maintainer. A pushed tag `v<version>` (the `package.json` version)
+runs two workflows: `publish.yml` publishes the package to npmjs and
+`image.yml` the image to GHCR.
+
+- npm needs the repository secret `NPM_TOKEN` (a granular token allowed to
+  publish this package name), until trusted publishing is set up for it on
+  npmjs.com.
+- The first publish of a new name is staged: npmjs.com, *Staged Packages*,
+  *Approve* (with 2FA). A `0.0.0-stage` placeholder appears meanwhile.
+- The first image creates the GHCR package private; make it public once in
+  its settings (*Change visibility*), or the sites cannot pull it.
+
+```
+git tag v0.5.0 && git push origin v0.5.0
+```
+
 ## Developing
 
 `pnpm test` builds and runs the tests against `dist/`, with a fake claude, a fake codex, a
