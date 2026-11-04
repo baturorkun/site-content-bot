@@ -52,4 +52,9 @@ export default {
 
   // What the test domain and production serve, for the page and the model.
   urls: { test: 'https://test.example.com', production: 'https://www.example.com' },
+
+  // The deploy jobs of the site's pipeline (GitLab job names, GitHub Actions
+  // job names): test puts main on the test domain, production a release tag
+  // on production. Recent changes and Release… read their state.
+  deploy: { test: 'deploy_linux', production: 'deploy_release' },
 };

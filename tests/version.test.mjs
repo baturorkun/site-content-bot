@@ -1,5 +1,6 @@
 // The version policies against a seed repository: aifactory with and without a
-// completed requirement, patch with and without a release, a function, a
+// completed requirement, and once the requirement has a release tag (the tag
+// at its commit, +1 past it), patch with and without a release, a function, a
 // function returning something that is not a version.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -50,6 +51,31 @@ test('aifactory: 1.<last completed requirement>.<largest retries of its run>; a 
   assert.equal(await nextVersion(policy, { candidate: TWO, production: { tag: 'v1.0.0', commit: ONE }, repo }), 'v1.7.2');
   assert.equal(policy.label, '1.<last requirement>.<its run id>');
   assert.equal(typeof policy.status, 'function');
+});
+
+test('aifactory: a release tag of the requirement fixes the version at its commit, and a later commit without a new requirement is its last number + 1', async () => {
+  // v1.12.0 released at THREE; a push after it is v1.12.1; another release there, the next push v1.12.2.
+  git('tag', 'v1.12.0', THREE);
+  writeFileSync(join(seed, 'README.md'), 'after the release\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'four');
+  const FOUR = git('rev-parse', 'HEAD');
+  git('push', '-q', 'origin', 'HEAD:main', 'v1.12.0');
+  await repo.fetch();
+  assert.deepEqual(await requirementVersion(THREE, repo), { version: '1.12.0', requirement: 'RQ-0012', run: 0 }, 'the tag at its own commit');
+  assert.deepEqual(await requirementVersion(FOUR, repo), { version: '1.12.1', requirement: 'RQ-0012', run: 0 });
+  git('tag', 'v1.12.1', FOUR);
+  writeFileSync(join(seed, 'README.md'), 'and again\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'five');
+  const FIVE = git('rev-parse', 'HEAD');
+  git('push', '-q', 'origin', 'HEAD:main', 'v1.12.1');
+  await repo.fetch();
+  assert.deepEqual(await requirementVersion(FIVE, repo), { version: '1.12.2', requirement: 'RQ-0012', run: 0 });
+  assert.deepEqual(await requirementVersion(TWO, repo), { version: '1.7.2', requirement: 'RQ-0007', run: 2 }, 'another requirement is untouched');
+  const policy = versionPolicy('aifactory');
+  assert.equal(await nextVersion(policy, { candidate: FIVE, production: { tag: 'v1.12.1', commit: FOUR }, repo }), 'v1.12.2');
+  assert.match(policy.unchangedHint, /next push to main/);
 });
 
 test("patch: production's tag with the patch raised; 1.0.0 without a release", async () => {

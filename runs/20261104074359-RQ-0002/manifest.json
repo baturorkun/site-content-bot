@@ -1,0 +1,68 @@
+{
+  "runId": "20261104074359-RQ-0002",
+  "requirementId": "RQ-0002",
+  "executionMode": "handoff",
+  "fast": false,
+  "handoffPath": "handoffs/20261104074359-RQ-0002/handoff.md",
+  "projectGuidelines": {
+    "combinedSha256": "a6fff543109000792556a4dd4ca0d42fb107e25c07f0486541a2212d8e6e25cb",
+    "files": [
+      {
+        "path": "AGENTS.md",
+        "sha256": "0f5c034ad64d864da6cd44a4ca4b2bf26017412cd5d15a73bae029a96f64ca1d"
+      }
+    ]
+  },
+  "status": "passed",
+  "createdAt": "2026-11-04T07:43:59.122Z",
+  "updatedAt": "2026-11-04T07:55:16.979Z",
+  "steps": [
+    {
+      "agent": "handoff",
+      "status": "passed",
+      "startedAt": "2026-11-04T07:55:02.177Z",
+      "finishedAt": "2026-11-04T07:55:16.979Z",
+      "retries": 0
+    }
+  ],
+  "artifacts": [
+    "README.md",
+    "assets/askpass.sh",
+    "assets/init/content-bot.config.mjs",
+    "assets/init/env.example",
+    "assets/page.html",
+    "package.json",
+    "requirements/RQ-0002-github-as-a-second-platform-login-deploy-state-and-releases.md",
+    "src/bot.ts",
+    "src/commands.ts",
+    "src/config.ts",
+    "src/github.ts",
+    "src/gitlab.ts",
+    "src/index.ts",
+    "src/platform.ts",
+    "src/server.ts",
+    "tests/bot.test.mjs",
+    "tests/cli.test.mjs",
+    "tests/config.test.mjs",
+    "tests/github.test.mjs"
+  ],
+  "deletedFiles": [],
+  "gateResults": {
+    "schemaCheck": "passed",
+    "build": "passed",
+    "typeCheck": "passed",
+    "lint": "skipped",
+    "tests": "passed",
+    "security": "passed",
+    "templateCheck": "passed"
+  },
+  "attempts": [
+    {
+      "number": 1,
+      "at": "2026-11-04T07:55:16.979Z",
+      "status": "passed",
+      "failedGates": [],
+      "changedFiles": 19
+    }
+  ]
+}

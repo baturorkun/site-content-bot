@@ -1,10 +1,13 @@
 // GitLab's API for the bot: where a commit is on its way (the pipeline and its
 // deploy job), the latest Release (what production serves), the newest green
-// main commit (what a release ships) and making a Release.
+// main commit (what a release ships) and making a Release. gitlabPlatform()
+// is all of it, with the login (auth.ts), as the Platform of platform.ts.
+import { ACCESS, GitLabAuth } from './auth.js';
+import type { DeployState, Platform, PlatformSettings, Release } from './platform.js';
+
+export type { DeployState, Release } from './platform.js';
 
 export interface GitLabSettings { url: string; project: string; token: string; fetchImpl?: typeof fetch }
-
-export type DeployState = { state: 'unknown' | 'waiting' | 'failed' | 'deployed' | 'running'; pipeline?: string };
 
 const projectApi = (url: string, project: string): string => `${url.replace(/\/$/, '')}/api/v4/projects/${encodeURIComponent(project)}`;
 
@@ -15,8 +18,8 @@ const getter = ({ url, project, token, fetchImpl = fetch }: GitLabSettings) => a
 };
 
 // Where a pushed commit is on its way: the newest pipeline of the ref (for a
-// commit, of that commit) and its deploy job: deploy_linux on main (the test
-// domain), deploy_release on a release tag (production).
+// commit, of that commit) and its deploy job (the config's deploy.test on
+// main, deploy.production on a release tag).
 export const deployState = async ({ url, project, token, sha, ref = 'main', job: jobName = 'deploy_linux', fetchImpl = fetch }: GitLabSettings & { sha?: string; ref?: string; job?: string }): Promise<DeployState> => {
   if (!url || !project || !token) return { state: 'unknown' };
   const get = getter({ url, project, token, fetchImpl });
@@ -29,12 +32,10 @@ export const deployState = async ({ url, project, token, sha, ref = 'main', job:
   return { state: 'running', pipeline: pipeline.web_url };
 };
 
-export interface Release { tag: string; commit: string }
-
 // The latest GitLab Release, what production serves: { tag, commit }, or null
 // when the project has none. Unset settings or an unreachable GitLab throw, named.
 export const latestRelease = async ({ url, project, token, fetchImpl = fetch }: GitLabSettings): Promise<Release | null> => {
-  if (!url || !project || !token) throw new Error('GitLab is not configured (GITLAB_URL, the token)');
+  if (!url || !project || !token) throw new Error('GitLab is not configured (CONTENT_BOT_PLATFORM_URL, the token)');
   const response = await fetchImpl(`${projectApi(url, project)}/releases?order_by=released_at&sort=desc&per_page=1`, { headers: { 'PRIVATE-TOKEN': token } });
   if (!response.ok) throw new Error(`GitLab answered ${response.status} for the releases`);
   const [release] = (await response.json()) as any[];
@@ -45,7 +46,7 @@ export const latestRelease = async ({ url, project, token, fetchImpl = fetch }: 
 // The newest main commit whose pipeline passed, so the test domain serves it:
 // what a release from the bot ships. { sha, pipeline } or null.
 export const lastGreenMain = async ({ url, project, token, fetchImpl = fetch }: GitLabSettings): Promise<{ sha: string; pipeline: string } | null> => {
-  if (!url || !project || !token) throw new Error('GitLab is not configured (GITLAB_URL, the token)');
+  if (!url || !project || !token) throw new Error('GitLab is not configured (CONTENT_BOT_PLATFORM_URL, the token)');
   const [pipeline] = await getter({ url, project, token, fetchImpl })('/pipelines?ref=main&status=success&per_page=1');
   return pipeline ? { sha: pipeline.sha, pipeline: pipeline.web_url } : null;
 };
@@ -72,4 +73,25 @@ export const projectReachable = async ({ url, project, token, fetchImpl = fetch 
   if (!response.ok) throw new Error(`GitLab answered ${response.status} for the project ${project}`);
   const body: any = await response.json();
   return body.path_with_namespace ?? project;
+};
+
+const hostOf = (url: string): string => { try { return new URL(url).host; } catch { return ''; } };
+
+// GitLab as the Platform (platform.ts): the functions above and the OAuth login.
+export const gitlabPlatform = (settings: PlatformSettings): Platform => {
+  const { url, project, token, fetchImpl = fetch } = settings;
+  const gitlab = { url, project, token, fetchImpl };
+  return {
+    name: 'GitLab',
+    host: hostOf(url),
+    project,
+    auth: new GitLabAuth({ url, clientId: settings.clientId, secret: settings.secret, redirectUri: settings.redirectUri, project, token, minAccess: settings.minAccess, fetchImpl }),
+    accessName: (level) => ACCESS[level] ?? `level ${level}`,
+    releaseRole: 'a Maintainer or Owner of the project',
+    deployState: ({ sha, ref, job }) => deployState({ ...gitlab, sha, ref, job }),
+    latestRelease: () => latestRelease(gitlab),
+    lastGreenMain: () => lastGreenMain(gitlab),
+    createRelease: (release) => createRelease({ ...gitlab, ...release }),
+    projectReachable: () => projectReachable(gitlab),
+  };
 };

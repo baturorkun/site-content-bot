@@ -5,6 +5,9 @@
 //              requirements/ at the candidate commit, run the largest retries
 //              in that requirement's completedRunId manifest (the attempt
 //              counter); 1.0.0 with none. The version the site's footer shows.
+//              Once that requirement has a release tag (a change after it
+//              without a new requirement), the tag at the commit is its
+//              version, and past it the newest such tag's last number + 1.
 //   patch      production's tag with the patch number raised; 1.0.0 with no
 //              release.
 //   function   ({ candidate, production, read }) => 'MAJOR.MINOR.PATCH'.
@@ -48,12 +51,24 @@ export const requirementVersion = async (ref: string, repo: StatusRepo): Promise
     const manifest = JSON.parse((runDir && await repo.show(ref, `runs/${runDir}/manifest.json`)) || '{}');
     run = Math.max(0, ...(manifest.steps ?? []).map((step: { retries?: unknown }) => Number(step.retries) || 0));
   } catch { run = 0; }
-  return { version: `1.${last.n}.${run}`, requirement: `RQ-${String(last.n).padStart(4, '0')}`, run };
+  // A release of this requirement already made (a change after it without a
+  // new requirement): the tag at this commit is its version; past one, the
+  // version is the newest such tag's last number + 1.
+  const prefix = `v1.${last.n}.`;
+  const tags = async (args: string[]): Promise<number[]> => {
+    try {
+      return (await repo.git(['tag', ...args, '--list', `${prefix}*`])).split('\n').map((tag) => tag.trim()).filter((tag) => /^\d+$/.test(tag.slice(prefix.length))).map((tag) => Number(tag.slice(prefix.length)));
+    } catch { return []; }
+  };
+  const here = await tags(['--points-at', ref]);
+  const released = await tags(['--merged', ref]);
+  const patch = here.length ? Math.max(...here) : released.length && Math.max(...released) >= run ? Math.max(...released) + 1 : run;
+  return { version: `1.${last.n}.${patch}`, requirement: `RQ-${String(last.n).padStart(4, '0')}`, run };
 };
 
 const aifactory: VersionPolicy = {
   label: '1.<last requirement>.<its run id>',
-  unchangedHint: 'A new version comes with the next completed requirement.',
+  unchangedHint: 'A new version comes with the next push to main or the next completed requirement.',
   next: async ({ candidate, repo }) => (await requirementVersion(candidate, repo))?.version ?? '1.0.0',
   status: requirementVersion,
 };

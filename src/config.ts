@@ -38,9 +38,14 @@ export interface Config {
   checks: string;
   version: PolicyName | VersionFunction;
   urls: { test: string; production: string };
+  // The deploy jobs of the site's pipeline: test puts main on the test
+  // domain, production a release tag on production.
+  deploy: { test: string; production: string };
 }
 
-const TOP_LEVEL = ['brand', 'editable', 'layout', 'exclude', 'build', 'checks', 'version', 'urls'];
+export const DEFAULT_DEPLOY = { test: 'deploy_linux', production: 'deploy_release' };
+
+const TOP_LEVEL = ['brand', 'editable', 'layout', 'exclude', 'build', 'checks', 'version', 'urls', 'deploy'];
 
 export class ConfigError extends Error {}
 
@@ -124,7 +129,15 @@ export const validateConfig = (raw: unknown): Config => {
   const urls = { test: text(urlsIn.test, 'urls.test')!, production: text(urlsIn.production, 'urls.production')! };
   for (const [key, value] of Object.entries(urls)) if (!/^https?:\/\//.test(value)) fail(`urls.${key}`, 'must be an http(s) URL');
 
-  return { brand, editable, ...(layout !== undefined ? { layout } : {}), exclude, build, checks, version, urls };
+  let deploy = DEFAULT_DEPLOY;
+  if (input.deploy !== undefined) {
+    if (!isObject(input.deploy)) fail('deploy', 'must be an object { test, production }');
+    const deployIn = input.deploy as Record<string, unknown>;
+    for (const key of Object.keys(deployIn)) if (!['test', 'production'].includes(key)) fail(`deploy.${key}`, 'is not a field (test, production)');
+    deploy = { test: text(deployIn.test, 'deploy.test')!, production: text(deployIn.production, 'deploy.production')! };
+  }
+
+  return { brand, editable, ...(layout !== undefined ? { layout } : {}), exclude, build, checks, version, urls, deploy };
 };
 
 let loads = 0;

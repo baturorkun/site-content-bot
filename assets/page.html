@@ -231,8 +231,8 @@
       <div class="welcome-icon" aria-hidden="true">✎</div>
       <p class="eyebrow">{{title}}</p>
       <h2>Log in</h2>
-      <p>With your GitLab account ({{gitlabHost}}). Members of the {{project}} project with {{access}} access or above can come in.</p>
-      <a id="login-link" class="primary-button" href="/auth/login">Log in with GitLab</a>
+      <p>With your {{platform}} account ({{host}}). Members of the {{project}} project with {{access}} access or above can come in.</p>
+      <a id="login-link" class="primary-button" href="/auth/login">Log in with {{platform}}</a>
       <div id="login-error" class="form-error" role="alert"></div>
     </div>
   </div>
@@ -271,7 +271,7 @@
         <h2 id="versions-title">Versions and model</h2>
         <dl class="version-facts">
           <div id="version-main-row" title="Main, what the test site serves: its version under the site's rule and the commit"><dt>Test site (main)</dt><dd id="version-main">…</dd></div>
-          <div title="The GitLab Release production serves"><dt>Production</dt><dd id="version-production">…</dd></div>
+          <div title="The {{platform}} Release production serves"><dt>Production</dt><dd id="version-production">…</dd></div>
           <div title="The language model that answers"><dt>Model</dt><dd id="llm-model">…</dd></div>
           <div title="How the bot reaches the model"><dt>Provider</dt><dd id="llm-provider">…</dd></div>
         </dl>
@@ -309,7 +309,7 @@
           <textarea id="question" name="question" rows="1" maxlength="8000" placeholder="Ask about the site or say which text to change…" required></textarea>
           <button id="send-button" class="send-button" type="submit"><span>Send</span><span aria-hidden="true">↗</span></button>
         </form>
-        <p class="composer-note">Enter to send · Shift + Enter for a new line · Apply goes to the test site; production changes only with a GitLab Release</p>
+        <p class="composer-note">Enter to send · Shift + Enter for a new line · Apply goes to the test site; production changes only with a {{platform}} Release</p>
       </div>
     </main>
   </div>
@@ -751,7 +751,7 @@
       }
     };
 
-    // ---- Release: what the test site serves goes to production as a GitLab Release.
+    // ---- Release: what the test site serves goes to production as a Release on the platform.
     const link = (text, href) => {
       const node = el('a', '', text);
       node.href = href;
@@ -880,7 +880,7 @@
       $('who').textContent = me.name;
       $('llm-model').textContent = data.llm?.model ?? '—';
       $('llm-provider').textContent = data.llm?.provider ?? '—';
-      // Maintainers and Owners release, as GitLab's protected v* tags allow.
+      // Maintainers (maintain on GitHub) and above release, as protected v* tags allow.
       $('release-open').hidden = (me.accessLevel ?? 0) < 40;
       $('test-link').href = urls.testUrl;
       $('prod-link').href = urls.prodUrl;
@@ -899,7 +899,7 @@
       $('scrim').hidden = !open;
     };
 
-    // A failed GitLab login comes back as ?login_error=…; it is shown once and dropped from the address.
+    // A failed login comes back as ?login_error=…; it is shown once and dropped from the address.
     const loginError = new URLSearchParams(location.search).get('login_error');
     if (loginError) {
       $('login-error').textContent = loginError;

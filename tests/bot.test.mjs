@@ -81,7 +81,7 @@ let lastAsk;
 let release = { tag: 'v1.0.0', commit: RELEASED };
 const created = [];
 const greenMain = { sha: undefined };
-const makeBot = ({ checks = 'true', build = BUILD, deploy, version } = {}) => {
+const makeBot = ({ checks = 'true', build = BUILD, deploy, version, platform } = {}) => {
   const id = Math.random().toString(16).slice(2);
   const repo = new Repo({ dir: join(work, `clone-${id}`), url: origin });
   const own = { ...config, checks, build: { ...config.build, command: build }, ...(version ? { version } : {}) };
@@ -96,6 +96,7 @@ const makeBot = ({ checks = 'true', build = BUILD, deploy, version } = {}) => {
     repo,
     site,
     deploy,
+    platform,
     config: own,
     releases: {
       candidate: async () => ({ sha: greenMain.sha ?? originHead(), pipeline: 'http://ci/main' }),
@@ -222,6 +223,26 @@ test('the copies: a failing build, a build without its output and a missing rele
   } finally {
     release = { tag: 'v1.0.0', commit: RELEASED };
   }
+});
+
+const GITHUB = { name: 'GitHub', releaseRole: 'a collaborator with the maintain or admin role' };
+test('on GitHub, the prompt and the refusals name GitHub and its roles', async () => {
+  release = null;
+  const bot = makeBot({ platform: GITHUB });
+  nextAnswer = { reply: 'ok', summary: '', edits: [] };
+  try {
+    await bot.propose(session(), 'x');
+    assert.match(lastAsk.prompt, /PRODUCTION: not available \(there is no GitHub Release yet\)/);
+  } finally {
+    release = { tag: 'v1.0.0', commit: RELEASED };
+  }
+  const writer = { ...user, accessLevel: 30 };
+  const preview = await bot.releasePreview(writer);
+  assert.equal(preview.canRelease, false);
+  assert.equal(preview.reason, 'Only a collaborator with the maintain or admin role can release.');
+  await assert.rejects(bot.release(writer, { tag: 'v1.0.1', sha: preview.candidate.sha }), /Only a collaborator with the maintain or admin role can release\./);
+  const maintainer = { ...user, accessLevel: 40 };
+  assert.equal((await bot.releasePreview(maintainer)).canRelease, true, 'maintain releases, as a Maintainer does');
 });
 
 test('a request becomes a proposal and writes nothing; Apply commits only the content file as the user and pushes it', async () => {
@@ -429,7 +450,7 @@ test('GitLab login: the state must come back; a member at Developer or above get
 test('the server: /auth/login goes to GitLab, the callback makes a session, a refusal comes back to the page; the API needs a session; the page carries the brand, in English', async () => {
   const { auth } = fakeGitLab();
   const llm = { provider: 'claude-cli (subscription)', model: 'claude-sonnet-5-5' };
-  const login = { host: 'gitlab.example', project: 'group/site', minAccess: 30 };
+  const login = { platform: 'GitLab', host: 'gitlab.example', project: 'group/site', access: 'Developer' };
   const server = createApp({ auth, bot: makeBot(), deploy: async () => ({ state: 'unknown' }), config, llm, login });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -466,6 +487,7 @@ test('the server: /auth/login goes to GitLab, the callback makes a session, a re
       llm,
       brand: { mark: 'EX', name: 'Example site', title: 'Content Bot', subtitle: "The Example site's texts" },
       policy: '1.<last requirement>.<its run id>',
+      platform: 'GitLab',
     });
     const preview = await (await get('/api/release', { cookie })).json();
     assert.equal(preview.canRelease, false, 'a Developer may not release');
@@ -481,6 +503,7 @@ test('the server: /auth/login goes to GitLab, the callback makes a session, a re
     assert.match(page, /<title>Content Bot<\/title>/);
     assert.match(page, /href="\/auth\/login">Log in with GitLab</);
     assert.match(page, /With your GitLab account \(gitlab\.example\)\. Members of the group\/site project with Developer access or above can come in\./, 'the login sentence from the settings');
+    assert.match(page, /title="The GitLab Release production serves"/);
     assert.match(page, /title="Example site">EX<\/div>/, 'the brand mark');
     assert.match(page, /<span>The Example site&#39;s texts<\/span>/, 'the subtitle, escaped');
     assert.doesNotMatch(page, /\{\{\w+\}\}/, 'every placeholder is filled');
@@ -541,7 +564,7 @@ test('release: what the test site serves since production\'s tag, for a Maintain
   }
 });
 
-test('release: nothing to release when production already runs the version the test site shows', async () => {
+test('release: nothing to release at the commit production runs; a push after it, without a new requirement, is its last number + 1', async () => {
   const maintainer = { ...user, accessLevel: 40 };
   greenMain.sha = execFileSync('git', ['--git-dir', origin, 'rev-parse', 'main~1'], { encoding: 'utf8' }).trim();
   git(seed, 'fetch', '-q', 'origin');
@@ -552,9 +575,16 @@ test('release: nothing to release when production already runs the version the t
     const preview = await makeBot().releasePreview(maintainer);
     assert.equal(preview.next, NEXT);
     assert.equal(preview.canRelease, false);
-    assert.match(preview.unchanged, /^No changes to release: production already runs v1\.3\.1\. A new version comes with the next completed requirement\./);
+    assert.equal(preview.unchanged, 'No changes to release: production already runs v1.3.1 and nothing has been pushed to main since.');
     assert.equal(preview.reason, preview.unchanged);
     await assert.rejects(makeBot().release(maintainer, { tag: NEXT, sha: greenMain.sha }), /Nothing has changed|already in production/);
+    // The next commit on main, with no new requirement: v1.3.2.
+    greenMain.sha = originHead();
+    const after = await makeBot().releasePreview(maintainer);
+    assert.equal(after.next, 'v1.3.2');
+    assert.equal(after.canRelease, true);
+    assert.equal(after.unchanged, undefined);
+    assert.equal((await makeBot().status()).main.version.version, '1.3.2', 'the sidebar shows the same version');
     const page = readFileSync(PAGE_FILE, 'utf8');
     assert.match(page, /if \(preview\.unchanged\) \{[^}]*submit\.hidden = true;/, 'no release button, only the note');
   } finally {

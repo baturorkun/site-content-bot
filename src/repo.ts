@@ -44,7 +44,8 @@ export class Repo {
       mkdirSync(dirname(this.dir), { recursive: true });
       await exec('git', ['clone', '--branch', this.branch, this.url, this.dir], { env: this.env });
     }
-    await this.git(['fetch', '--prune', 'origin', this.branch]);
+    // The tags too: a release tag of the same requirement moves the version's last number (version.ts).
+    await this.git(['fetch', '--prune', '--tags', 'origin', this.branch]);
     await this.git(['checkout', '-q', '-B', this.branch, `origin/${this.branch}`]);
     await this.git(['reset', '-q', '--hard', `origin/${this.branch}`]);
     // node_modules/ is ignored and kept: the checks reuse it.
@@ -55,7 +56,7 @@ export class Repo {
   // Brings origin/main up to date without touching the working tree.
   async fetch(): Promise<string | void> {
     if (!existsSync(`${this.dir}/.git`)) return this.sync();
-    await this.git(['fetch', '--prune', 'origin', this.branch]);
+    await this.git(['fetch', '--prune', '--tags', 'origin', this.branch]);
   }
 
   async changedFiles(): Promise<string[]> {
