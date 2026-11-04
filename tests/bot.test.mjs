@@ -81,7 +81,7 @@ let lastAsk;
 let release = { tag: 'v1.0.0', commit: RELEASED };
 const created = [];
 const greenMain = { sha: undefined };
-const makeBot = ({ checks = 'true', build = BUILD, deploy, version, platform } = {}) => {
+const makeBot = ({ checks = 'true', build = BUILD, deploy, version, platform, reads } = {}) => {
   const id = Math.random().toString(16).slice(2);
   const repo = new Repo({ dir: join(work, `clone-${id}`), url: origin });
   const own = { ...config, checks, build: { ...config.build, command: build }, ...(version ? { version } : {}) };
@@ -97,6 +97,7 @@ const makeBot = ({ checks = 'true', build = BUILD, deploy, version, platform } =
     site,
     deploy,
     platform,
+    reads,
     config: own,
     releases: {
       candidate: async () => ({ sha: greenMain.sha ?? originHead(), pipeline: 'http://ci/main' }),
@@ -226,6 +227,15 @@ test('the copies: a failing build, a build without its output and a missing rele
 });
 
 const GITHUB = { name: 'GitHub', releaseRole: 'a collaborator with the maintain or admin role' };
+test('the prompt says how the model reads: Read, Glob and Grep for claude (the default), read-only shell commands for codex', async () => {
+  nextAnswer = { reply: 'ok', summary: '', edits: [] };
+  await makeBot().propose(session(), 'x');
+  assert.match(lastAsk.prompt, /You read the site with Read, Glob and Grep \(absolute paths, in the\ndirectories below\)/);
+  await makeBot({ reads: 'with read-only shell commands (ls, cat, rg) in a read-only sandbox' }).propose(session(), 'x');
+  assert.match(lastAsk.prompt, /You read the site with read-only shell commands \(ls, cat, rg\) in a read-only sandbox \(absolute paths/);
+  assert.doesNotMatch(lastAsk.prompt, /Read, Glob and Grep/);
+});
+
 test('on GitHub, the prompt and the refusals name GitHub and its roles', async () => {
   release = null;
   const bot = makeBot({ platform: GITHUB });

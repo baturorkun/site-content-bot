@@ -80,6 +80,10 @@ test('the wizard on a pnpm site: GitHub proposed, the config from the repository
   assert.equal(env.CONTENT_BOT_OAUTH_ID, 'app-id');
   assert.equal(env.CONTENT_BOT_OAUTH_SECRET, 'app-secret');
   assert.equal(env.CONTENT_BOT_ENGINE, 'docker');
+  assert.equal(env.CONTENT_BOT_LLM, 'claude');
+  assert.match(readFileSync(envFile, 'utf8'), /^#CONTENT_BOT_MODEL=claude-opus-5-5$/m, "claude's default model: a comment");
+  assert.ok(script.prompts.includes('The language model CLI (claude, codex) [claude]: '));
+  assert.ok(script.notes.includes('  docker exec -it site-content-bot claude      # /login once, then /exit'));
   assert.match(env.CONTENT_BOT_URL, /^http:\/\/[^/]+:8290$/);
   assert.equal(env.CONTENT_BOT_HOST_PORT, undefined, 'at its default: a comment');
   assert.match(readFileSync(envFile, 'utf8'), /^#CONTENT_BOT_MIN_ACCESS=30$/m);
@@ -164,11 +168,17 @@ test('GitLab: gitlab.com or the own address from the remote; with no remote the 
   assert.ok(script.notes.includes('The platform: no git remote; say which.'));
   assert.ok(script.prompts.includes('The GitLab address (https://gitlab.com or your own) [https://gitlab.com]: '));
   assert.equal(result.settings.CONTENT_BOT_PLATFORM_URL, 'https://gitlab.com');
-  const withPodman = scripted({ 'container engine': 'podman', 'Application ID': 'id' }, { secrets: { 'Its secret': 's', 'The token': 'glpat' } });
+  const withPodman = scripted({ 'container engine': 'podman', 'Application ID': 'id', 'language model CLI': 'codex' }, { secrets: { 'Its secret': 's', 'The token': 'glpat' } });
   const podman = await runWizard({ dir, ask: withPodman.ask, exec, templates, version: '0.3.0', verify });
   assert.equal(podman.engine, 'podman');
   assert.ok(withPodman.notes.includes('  podman compose -f tools/content-bot/compose.yaml up -d --build'));
-  assert.ok(withPodman.notes.some((note) => note.startsWith('  podman exec -it site-content-bot claude')), 'the engine\'s own exec');
+  assert.ok(withPodman.notes.some((note) => note.startsWith('  podman exec -it site-content-bot codex login --device-auth')), "the engine's own exec, the chosen CLI's login");
+  assert.equal(podman.settings.CONTENT_BOT_LLM, 'codex');
+  assert.equal(podman.settings.CONTENT_BOT_MODEL, '', "codex: its own default model");
+  assert.ok(withPodman.prompts.includes("The model (empty: codex's default): "), 'no claude model proposed for codex');
+  const written = readFileSync(join(dir, 'tools/content-bot/.env'), 'utf8');
+  assert.match(written, /^CONTENT_BOT_LLM=codex$/m);
+  assert.match(written, /^#CONTENT_BOT_MODEL=$/m);
   assert.ok(script.notes.some((note) => note.includes('https://gitlab.com/groups/group/-/settings/applications')), 'the OAuth page on that address');
 });
 

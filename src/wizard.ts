@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { CONFIG_FILE, DEFAULT_DEPLOY, loadConfig, validateConfig, type Config, type EditableEntry } from './config.js';
 import { apiBase } from './github.js';
 import { composeCommand, defaultExec, detect, GENERIC_RULE, type Engine, type Exec, type Findings } from './detect.js';
+import { LLM_NAMES, LLMS, type LlmName } from './llm.js';
 import { createPlatform, PLATFORM_NAMES, type Platform, type PlatformName } from './platform.js';
 
 export interface Ask {
@@ -19,7 +20,7 @@ export interface Ask {
 }
 
 // The settings the wizard writes to .env, by their flag names.
-export const FLAGS = ['repo-url', 'platform', 'platform-url', 'project', 'engine', 'url', 'port', 'oauth-id', 'oauth-secret', 'token', 'min-access', 'model', 'test-url', 'production-url'] as const;
+export const FLAGS = ['repo-url', 'platform', 'platform-url', 'project', 'engine', 'url', 'port', 'oauth-id', 'oauth-secret', 'token', 'min-access', 'llm', 'model', 'test-url', 'production-url'] as const;
 export type Flag = (typeof FLAGS)[number];
 
 export interface Settings {
@@ -33,6 +34,7 @@ export interface Settings {
   CONTENT_BOT_OAUTH_SECRET: string;
   CONTENT_BOT_ENGINE: string;
   CONTENT_BOT_MIN_ACCESS: string;
+  CONTENT_BOT_LLM: string;
   CONTENT_BOT_MODEL: string;
   // The host port the compose file publishes; inside the container the bot listens on 8290.
   CONTENT_BOT_HOST_PORT: string;
@@ -41,7 +43,7 @@ export interface Settings {
 export class WizardError extends Error {}
 
 const ENV_FILE = 'tools/content-bot/.env';
-const OPTIONAL: Partial<Record<keyof Settings, string>> = { CONTENT_BOT_MIN_ACCESS: '30', CONTENT_BOT_MODEL: 'claude-opus-5-5', CONTENT_BOT_HOST_PORT: '8290', CONTENT_BOT_PLATFORM_URL: '', CONTENT_BOT_PLATFORM: '', CONTENT_BOT_ENGINE: '' };
+const OPTIONAL: Partial<Record<keyof Settings, string>> = { CONTENT_BOT_MIN_ACCESS: '30', CONTENT_BOT_HOST_PORT: '8290', CONTENT_BOT_PLATFORM_URL: '', CONTENT_BOT_PLATFORM: '', CONTENT_BOT_ENGINE: '' };
 
 // KEY=VALUE lines of a .env (quotes around the value dropped, comments skipped).
 export const readEnv = (file: string): Partial<Settings> => {
@@ -59,11 +61,13 @@ const quote = (value: string): string => (/[\s#"'$\\]/.test(value) ? JSON.string
 // The .env, every setting with a line, the optional ones as comments at their
 // default; mode 0600: it holds the secrets.
 export const writeEnv = (file: string, settings: Settings): void => {
+  // The model's default is the chosen CLI's (llm.ts).
+  const defaults: Partial<Record<keyof Settings, string>> = { ...OPTIONAL, CONTENT_BOT_MODEL: LLMS[(settings.CONTENT_BOT_LLM || 'claude') as LlmName]?.defaultModel ?? '' };
   const line = (key: keyof Settings, comment: string) => {
     const value = settings[key] ?? '';
-    const optional = key in OPTIONAL;
-    const atDefault = optional && value === OPTIONAL[key];
-    return `# ${comment}\n${atDefault ? '#' : ''}${key}=${quote(atDefault ? (OPTIONAL[key] || '') : value)}`;
+    const optional = key in defaults;
+    const atDefault = optional && value === defaults[key];
+    return `# ${comment}\n${atDefault ? '#' : ''}${key}=${quote(atDefault ? (defaults[key] || '') : value)}`;
   };
   const text = [
     '# site-content-bot settings, written by `site-content-bot init`: where the bot runs and its',
@@ -79,7 +83,8 @@ export const writeEnv = (file: string, settings: Settings): void => {
     line('CONTENT_BOT_OAUTH_SECRET', 'Its secret.'),
     line('CONTENT_BOT_ENGINE', 'The container engine start uses: docker, podman or podman-compose.'),
     line('CONTENT_BOT_MIN_ACCESS', 'The access a person needs: 30 = Developer on GitLab, write on GitHub.'),
-    line('CONTENT_BOT_MODEL', 'The model the claude CLI answers with.'),
+    line('CONTENT_BOT_LLM', 'The language model CLI that answers: claude or codex.'),
+    line('CONTENT_BOT_MODEL', "That CLI's model; empty: its default (claude-opus-5-5 for claude, codex's own for codex)."),
     line('CONTENT_BOT_HOST_PORT', 'The host port the compose file publishes (the bot listens on 8290 inside).'),
     '',
   ].join('\n');
@@ -317,7 +322,12 @@ export const runWizard = async (options: WizardOptions): Promise<WizardResult> =
   // 8. The optional settings.
   const minAccess = await value('min-access', `The access a person needs (30 = ${accessName(platform, '30')}, 40 = ${accessName(platform, '40')})`, current.CONTENT_BOT_MIN_ACCESS || '30');
   if (!/^\d+$/.test(minAccess)) throw new WizardError(`the access is a number, not ${JSON.stringify(minAccess)}`);
-  const model = await value('model', 'The model', current.CONTENT_BOT_MODEL || 'claude-opus-5-5');
+  const llmIn = (await value('llm', `The language model CLI (${LLM_NAMES.join(', ')})`, current.CONTENT_BOT_LLM || 'claude')).toLowerCase();
+  if (!LLM_NAMES.includes(llmIn as LlmName)) throw new WizardError(`the language model CLI is ${LLM_NAMES.join(' or ')}, not ${JSON.stringify(llmIn)}`);
+  const llm = llmIn as LlmName;
+  // The model: what was written for this CLI, else its default (codex: its own, empty).
+  const keptModel = (current.CONTENT_BOT_LLM || 'claude') === llm ? current.CONTENT_BOT_MODEL : undefined;
+  const model = await value('model', llm === 'codex' ? "The model (empty: codex's default)" : 'The model', keptModel || LLMS[llm].defaultModel || undefined, { required: false });
 
   // 9. Written.
   const settings: Settings = {
@@ -331,6 +341,7 @@ export const runWizard = async (options: WizardOptions): Promise<WizardResult> =
     CONTENT_BOT_OAUTH_SECRET: oauthSecret,
     CONTENT_BOT_ENGINE: engine ?? '',
     CONTENT_BOT_MIN_ACCESS: minAccess,
+    CONTENT_BOT_LLM: llm,
     CONTENT_BOT_MODEL: model,
     CONTENT_BOT_HOST_PORT: port,
   };
@@ -360,7 +371,7 @@ export const runWizard = async (options: WizardOptions): Promise<WizardResult> =
   ask.note(`\nNext: commit ${CONFIG_FILE} and tools/content-bot/{Dockerfile,compose.yaml} (not .env), then:`);
   const runner = engine && engine !== 'docker' ? 'podman' : 'docker';
   ask.note(`  ${engine ? composeCommand(engine).join(' ') : 'docker compose'} -f tools/content-bot/compose.yaml up -d --build`);
-  ask.note(`  ${runner} exec -it site-content-bot claude      # /login once, then /exit`);
+  ask.note(`  ${runner} exec -it site-content-bot ${LLMS[llm].login}`);
   ask.note(`  ${runner} exec -it site-content-bot site-content-bot check`);
   ask.note(`The bot will be at ${botUrl} (host port ${port}); log in with ${platform === 'gitlab' ? 'GitLab' : 'GitHub'}.`);
   return { written, kept, settings, config, engine, warnings };

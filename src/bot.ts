@@ -58,8 +58,11 @@ export interface Turn { role: 'user' | 'assistant'; text: string }
 export interface Proposal { id: string; chatId: string; request: string; summary: string; edits: Edit[] }
 export interface Session { user: User; chats: Map<string, Turn[]>; proposal: Proposal | undefined }
 
-const instructions = (config: Config, editable: Editable): string => `You are ${config.brand.title}. You answer questions about the ${config.brand.name} and change
-its texts. You read the site with Read, Glob and Grep (absolute paths, in the
+// How the model reads the copies, as its CLI lets it (llm.ts): claude's by default.
+export const DEFAULT_READS = 'with Read, Glob and Grep';
+
+const instructions = (config: Config, editable: Editable, reads: string): string => `You are ${config.brand.title}. You answer questions about the ${config.brand.name} and change
+its texts. You read the site ${reads} (absolute paths, in the
 directories below); you cannot write, run commands or browse. Answer only with
 the JSON asked for.
 
@@ -108,8 +111,8 @@ const directories = (context: Context, config: Config, editable: Editable, platf
   return lines.join('\n');
 };
 
-const prompt = ({ history, message, context, config, editable, platformName }: { history: Turn[]; message: string; context: Context; config: Config; editable: Editable; platformName: string }): string => [
-  instructions(config, editable),
+const prompt = ({ history, message, context, config, editable, platformName, reads }: { history: Turn[]; message: string; context: Context; config: Config; editable: Editable; platformName: string; reads: string }): string => [
+  instructions(config, editable, reads),
   `\nThe directories (read-only copies):\n${directories(context, config, editable, platformName)}`,
   history.length ? `\nThe conversation so far:\n${history.map((turn) => `${turn.role}: ${turn.text}`).join('\n')}` : '',
   `\nThe user's request now:\n${message}`,
@@ -145,6 +148,8 @@ export interface ContentBotOptions {
   releases: Releases;
   // The platform's name and who may release there, for the prompt and the messages.
   platform?: { name: string; releaseRole: string };
+  // How the model reads the copies (llm.ts), for the prompt.
+  reads?: string;
 }
 
 export class ContentBot {
@@ -158,6 +163,7 @@ export class ContentBot {
   deploy: (sha: string) => Promise<DeployState>;
   releases: Releases;
   platform: { name: string; releaseRole: string };
+  reads: string;
   urls: { testUrl: string; prodUrl: string };
   busy: Promise<unknown>;
   finalStates: Map<string, { state: string; pipeline?: string }>;
@@ -166,7 +172,7 @@ export class ContentBot {
   // its checks (a shell command run in the clone), its editable files, its
   // URLs and its version policy; site: site.ts; deploy: (sha) => the pipeline
   // state (gitlab.ts); releases: candidate/create/state (above).
-  constructor({ repo, ask, site, config, deploy = async () => ({ state: 'unknown' }), releases, platform = DEFAULT_PLATFORM }: ContentBotOptions) {
+  constructor({ repo, ask, site, config, deploy = async () => ({ state: 'unknown' }), releases, platform = DEFAULT_PLATFORM, reads = DEFAULT_READS }: ContentBotOptions) {
     this.repo = repo;
     this.ask = ask;
     this.site = site;
@@ -177,6 +183,7 @@ export class ContentBot {
     this.deploy = deploy;
     this.releases = releases;
     this.platform = platform;
+    this.reads = reads;
     this.urls = { testUrl: config.urls.test, prodUrl: config.urls.production };
     this.busy = Promise.resolve();
     this.finalStates = new Map();
@@ -196,7 +203,7 @@ export class ContentBot {
       return this.site.context();
     });
     const dirs = [context.main, context.test, (context.production as any)?.dir].filter(Boolean) as string[];
-    const answer = await this.ask(prompt({ history: history.slice(-HISTORY_TURNS), message, context, config: this.config, editable: this.editable, platformName: this.platform.name }), ANSWER_SCHEMA, dirs);
+    const answer = await this.ask(prompt({ history: history.slice(-HISTORY_TURNS), message, context, config: this.config, editable: this.editable, platformName: this.platform.name, reads: this.reads }), ANSWER_SCHEMA, dirs);
     const edits: Edit[] = Array.isArray(answer.edits) ? answer.edits : [];
     history.push({ role: 'user', text: message }, { role: 'assistant', text: answer.reply });
     if (!edits.length) {

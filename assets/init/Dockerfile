@@ -8,16 +8,16 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends git ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
-# The claude CLI (the subscription login lives in /data/home), the bot, and
-# pnpm for the site's build and checks in the clone.
+# The two language model CLIs (CONTENT_BOT_LLM chooses; their logins live in
+# /data/home), the bot, and pnpm for the site's build and checks in the clone.
 ENV COREPACK_HOME=/opt/corepack
-RUN npm install --global @anthropic-ai/claude-code@2.1.312 site-content-bot@{{version}} \
+RUN npm install --global @anthropic-ai/claude-code@2.1.312 @openai/codex@0.166.0 site-content-bot@{{version}} \
   && corepack enable \
   && corepack prepare pnpm@9.15.9 --activate \
   && chmod -R a+rX /opt/corepack
 
 # /data is the volume: the clone (repo/), the copies the model reads (site/)
-# and the claude login (home/).
+# and the claude and codex logins (home/).
 RUN mkdir -p /data/home && chown -R node:node /data
 ENV HOME=/data/home \
     CONTENT_BOT_REPO_DIR=/data/repo \
