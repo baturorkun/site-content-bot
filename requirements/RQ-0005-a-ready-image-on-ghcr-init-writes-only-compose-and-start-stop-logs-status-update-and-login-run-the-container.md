@@ -8,6 +8,8 @@ createdByEmail: "batur@bc.int"
 createdAt: "2026-11-04T11:32:48.589Z"
 branch: "factory/RQ-0005"
 createdFromCommit: "ac2b105cc1b82b5d7c310a636551ad54114ffd3f"
+githubPullRequestUrl: "https://github.com/baturorkun/site-content-bot/pull/10"
+githubPullRequestIid: 10
 githubIssueUrl: "https://github.com/baturorkun/site-content-bot/issues/9"
 githubIssueIid: 9
 repositoryProvider: github
