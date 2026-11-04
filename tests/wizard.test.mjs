@@ -51,7 +51,8 @@ const verify = async (input) => { verified.push(input); return ['the project ans
 test('the wizard on a pnpm site: GitHub proposed, the config from the repository, .env with every setting at 0600, .gitignore, the summary', async () => {
   const script = scripted({ 'test domain serves': 'https://test.example.com', 'production serves': 'https://www.example.com', 'Client ID': 'app-id' }, { secrets: { 'Its secret': 'app-secret', 'The token': 'ghp_token' } });
   const result = await runWizard({ dir: site, ask: script.ask, exec, templates, version: '0.3.0', verify });
-  assert.deepEqual(result.written, ['content-bot.config.mjs', 'tools/content-bot/Dockerfile', 'tools/content-bot/compose.yaml', 'tools/content-bot/.env', '.gitignore (+ tools/content-bot/.env)']);
+  assert.deepEqual(result.written, ['content-bot.config.mjs', 'tools/content-bot/compose.yaml', 'tools/content-bot/.env', '.gitignore (+ tools/content-bot/.env)'], 'no Dockerfile: the container runs the published image');
+  assert.equal(existsSync(join(site, 'tools/content-bot/Dockerfile')), false);
   assert.deepEqual(result.kept, []);
   assert.equal(result.engine, 'docker');
   assert.deepEqual(result.warnings, []);
@@ -83,14 +84,17 @@ test('the wizard on a pnpm site: GitHub proposed, the config from the repository
   assert.equal(env.CONTENT_BOT_LLM, 'claude');
   assert.match(readFileSync(envFile, 'utf8'), /^#CONTENT_BOT_MODEL=claude-opus-5-5$/m, "claude's default model: a comment");
   assert.ok(script.prompts.includes('The language model CLI (claude, codex) [claude]: '));
-  assert.ok(script.notes.includes('  docker exec -it site-content-bot claude      # /login once, then /exit'));
+  assert.ok(script.notes.includes('  npx site-content-bot start      # up, healthy, checked; it logs the model CLI in'));
+  assert.ok(script.notes.includes('  (by hand: docker compose -f tools/content-bot/compose.yaml up -d, then docker exec -it site-content-bot claude)'));
+  assert.ok(script.prompts.includes("The container's name (one per site on this host) [site-content-bot]: "));
+  assert.match(readFileSync(envFile, 'utf8'), /^#CONTENT_BOT_CONTAINER=site-content-bot$/m, 'the default name: a comment');
   assert.match(env.CONTENT_BOT_URL, /^http:\/\/[^/]+:8290$/);
   assert.equal(env.CONTENT_BOT_HOST_PORT, undefined, 'at its default: a comment');
   assert.match(readFileSync(envFile, 'utf8'), /^#CONTENT_BOT_MIN_ACCESS=30$/m);
   assert.equal(env.CONTENT_BOT_PLATFORM_URL, undefined, 'github.com: empty, a comment');
   assert.match(readFileSync(envFile, 'utf8'), /^#CONTENT_BOT_PLATFORM_URL=$/m);
   assert.match(readFileSync(join(site, '.gitignore'), 'utf8'), /\ntools\/content-bot\/\.env\n$/);
-  assert.match(readFileSync(join(site, 'tools/content-bot/Dockerfile'), 'utf8'), /site-content-bot@0\.3\.0/);
+  assert.match(readFileSync(join(site, 'tools/content-bot/compose.yaml'), 'utf8'), /image: \$\{CONTENT_BOT_IMAGE:-ghcr\.io\/baturorkun\/site-content-bot:0\.3\.0\}/, 'the image of this version');
   assert.match(readFileSync(join(site, 'tools/content-bot/compose.yaml'), 'utf8'), /\$\{CONTENT_BOT_HOST_PORT:-8290\}:8290/);
 
   assert.equal(verified.length, 1);
@@ -99,13 +103,16 @@ test('the wizard on a pnpm site: GitHub proposed, the config from the repository
   assert.equal(verified[0].url, 'https://github.com');
   assert.ok(script.notes.some((note) => /github\.com\/settings\/developers/.test(note) && /auth\/callback/.test(note)), 'the OAuth App instructions with the callback');
   assert.ok(script.notes.some((note) => note.trim().startsWith('Next: commit content-bot.config.mjs')));
-  assert.ok(script.notes.some((note) => /docker compose -f tools\/content-bot\/compose\.yaml up -d --build/.test(note)));
+
 });
 
-test('a second run proposes what was written, keeps the Dockerfile and the compose file, and changes only what is answered', async () => {
+test('a second run proposes what was written, keeps the compose file, says an old Dockerfile is no longer used, and changes only what is answered', async () => {
+  writeFileSync(join(site, 'tools/content-bot/Dockerfile'), 'FROM node:20\n');
   const script = scripted({ 'The site, as the page': 'Example site', 'The bot as the browser': 'https://bot.example.com', 'host port': '9000' });
   const result = await runWizard({ dir: site, ask: script.ask, exec, templates, version: '0.3.0', verify });
-  assert.deepEqual(result.kept, ['tools/content-bot/Dockerfile', 'tools/content-bot/compose.yaml']);
+  assert.deepEqual(result.kept, ['tools/content-bot/compose.yaml']);
+  assert.ok(result.warnings.includes('tools/content-bot/Dockerfile is no longer used (the container runs the published image); delete it'));
+  assert.equal(readFileSync(join(site, 'tools/content-bot/Dockerfile'), 'utf8'), 'FROM node:20\n', 'left alone');
   assert.ok(script.prompts.some((prompt) => prompt.includes('[https://test.example.com]')), 'the URL written before is the proposal');
   assert.ok(script.prompts.some((prompt) => prompt.startsWith('Its Client ID') && prompt.includes('[app-id]')));
   assert.ok(script.prompts.some((prompt) => prompt.startsWith('The token') && prompt.includes('[kept]')), 'a secret is kept, not shown');
@@ -168,11 +175,11 @@ test('GitLab: gitlab.com or the own address from the remote; with no remote the 
   assert.ok(script.notes.includes('The platform: no git remote; say which.'));
   assert.ok(script.prompts.includes('The GitLab address (https://gitlab.com or your own) [https://gitlab.com]: '));
   assert.equal(result.settings.CONTENT_BOT_PLATFORM_URL, 'https://gitlab.com');
-  const withPodman = scripted({ 'container engine': 'podman', 'Application ID': 'id', 'language model CLI': 'codex' }, { secrets: { 'Its secret': 's', 'The token': 'glpat' } });
+  const withPodman = scripted({ 'container engine': 'podman', "container's name": 'site-b', 'Application ID': 'id', 'language model CLI': 'codex' }, { secrets: { 'Its secret': 's', 'The token': 'glpat' } });
   const podman = await runWizard({ dir, ask: withPodman.ask, exec, templates, version: '0.3.0', verify });
   assert.equal(podman.engine, 'podman');
-  assert.ok(withPodman.notes.includes('  podman compose -f tools/content-bot/compose.yaml up -d --build'));
-  assert.ok(withPodman.notes.some((note) => note.startsWith('  podman exec -it site-content-bot codex login --device-auth')), "the engine's own exec, the chosen CLI's login");
+  assert.ok(withPodman.notes.includes('  (by hand: podman compose -f tools/content-bot/compose.yaml up -d, then podman exec -it site-b codex login --device-auth)'), "the engine's own exec, the container's name, the chosen CLI's login");
+  assert.equal(podman.settings.CONTENT_BOT_CONTAINER, 'site-b');
   assert.equal(podman.settings.CONTENT_BOT_LLM, 'codex');
   assert.equal(podman.settings.CONTENT_BOT_MODEL, '', "codex: its own default model");
   assert.ok(withPodman.prompts.includes("The model (empty: codex's default): "), 'no claude model proposed for codex');
@@ -197,7 +204,7 @@ test('a refused token is asked again; Enter keeps it unverified with a warning; 
   assert.equal(one.engine, null);
   assert.ok(one.warnings.includes('no container engine answers: install Docker (docker compose) or Podman (podman compose) before starting the bot'));
   assert.ok(retried.notes.some((note) => note.includes('the token was refused: GitHub answered 401 for the repository')));
-  assert.ok(retried.notes.some((note) => note.trim().startsWith('podman') === false && note.includes('docker exec -it site-content-bot claude')), 'no engine: the docker commands');
+  assert.ok(retried.notes.some((note) => note.includes('docker compose -f tools/content-bot/compose.yaml up -d, then docker exec -it site-content-bot claude')), 'no engine: the docker commands');
   rmSync(join(dir, 'tools'), { recursive: true });
   const kept = scripted({ 'The build command': 'make site', 'test domain': 'https://t.example', 'production serves': 'https://p.example', 'Client ID': 'id' }, { secrets: { 'Its secret': 's', 'The token:': 'bad', 'The token again': '' } });
   attempts = 0;

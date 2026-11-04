@@ -11,6 +11,7 @@ import { parseArgs } from 'node:util';
 import { ContentBot } from './bot.js';
 import { CONFIG_FILE, loadConfig, type Config } from './config.js';
 import { Editable } from './edits.js';
+import * as container from './container.js';
 import { composeCommand, defaultExec, type Engine } from './detect.js';
 import { LLMS, llmOf, makeAsk, probe } from './llm.js';
 import { createPlatform, platformOf, type PlatformName } from './platform.js';
@@ -38,6 +39,15 @@ Commands:
        --yes                take every proposal; what has none comes from the
                             flags --${FLAGS.join(', --')}
                             or the environment (CONTENT_BOT_TOKEN, CONTENT_BOT_OAUTH_SECRET)
+
+  In the site's clone on the host, after init (each takes --dir <path>):
+  start                     bring the container up, wait until healthy, check it,
+                            log the model CLI in at a terminal, print the address
+  stop                      take it down (the volume is kept)
+  logs [--follow]           its log
+  status                    whether it runs, and its check
+  update [--to <version>]   the image to <version> (default: this CLI's), pulled and started
+  login                     the model CLI's login in the container (when it expired)
 
 Options:
   -h, --help     show this help
@@ -271,6 +281,8 @@ export const main = async (argv: string[]): Promise<number> => {
         config: { type: 'string' },
         dir: { type: 'string' },
         yes: { type: 'boolean' },
+        follow: { type: 'boolean', short: 'f' },
+        to: { type: 'string' },
         ...Object.fromEntries(FLAGS.map((flag) => [flag, { type: 'string' }])),
       },
     });
@@ -295,6 +307,22 @@ export const main = async (argv: string[]): Promise<number> => {
         await init(resolve(parsed.values.dir === undefined ? '.' : String(parsed.values.dir)), { yes: Boolean(parsed.values.yes), given });
         return 0;
       }
+      case 'start':
+      case 'stop':
+      case 'logs':
+      case 'status':
+      case 'update':
+      case 'login': {
+        const dir = resolve(parsed.values.dir === undefined ? '.' : String(parsed.values.dir));
+        const site = await container.readSite(dir);
+        const io = { out: (line: string) => console.log(line), terminal: Boolean(process.stdin.isTTY && process.stdout.isTTY) };
+        if (command === 'start') return await container.start(site, io);
+        if (command === 'stop') return await container.stop(site, io);
+        if (command === 'logs') return await container.logs(site, io, { follow: Boolean(parsed.values.follow) });
+        if (command === 'status') return await container.status(site, io);
+        if (command === 'update') return await container.update(site, io, { to: parsed.values.to === undefined ? undefined : String(parsed.values.to), version: version() });
+        return await container.login(site, io);
+      }
       case undefined:
         console.error(HELP);
         return 2;
@@ -305,7 +333,7 @@ export const main = async (argv: string[]): Promise<number> => {
     }
   } catch (error) {
     console.error(`site-content-bot: ${String(error?.message ?? error)}`);
-    return error instanceof Usage ? 2 : 1;
+    return error instanceof Usage || error instanceof container.ContainerError ? 2 : 1;
   }
 };
 
