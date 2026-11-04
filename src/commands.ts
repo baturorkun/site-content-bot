@@ -2,8 +2,9 @@
 // a site needs to run it). Settings come from the environment (README.md), the
 // site's description from content-bot.config.mjs at the root of its repository.
 import { execFile } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { createInterface } from 'node:readline';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -11,11 +12,13 @@ import { ContentBot } from './bot.js';
 import { askClaude } from './claude.js';
 import { CONFIG_FILE, loadConfig, type Config } from './config.js';
 import { Editable } from './edits.js';
+import { composeCommand, defaultExec, type Engine } from './detect.js';
 import { createPlatform, platformOf, type PlatformName } from './platform.js';
 import { Repo } from './repo.js';
 import { createApp } from './server.js';
 import { Site } from './site.js';
 import { versionPolicy } from './version.js';
+import { FLAGS, runWizard, WizardError, type Ask, type Flag } from './wizard.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ASSETS = join(HERE, '..', 'assets');
@@ -27,8 +30,14 @@ Commands:
                             the site's description from ${CONFIG_FILE}
                             at the root of the cloned repository)
   check [--config <file>]   report whether everything is in place, exit 1 if not
-  init [--dir <path>]       write what a site needs: ${CONFIG_FILE},
-                            tools/content-bot/{Dockerfile,compose.yaml,.env.example}
+  init [--dir <path>]       set the bot up for the site in <path> (default .): the
+                            platform, the engine and the site's shape are found
+                            out, the rest asked, the token verified; writes
+                            ${CONFIG_FILE}, tools/content-bot/{Dockerfile,
+                            compose.yaml} (to commit) and tools/content-bot/.env
+       --yes                take every proposal; what has none comes from the
+                            flags --${FLAGS.join(', --')}
+                            or the environment (CONTENT_BOT_TOKEN, CONTENT_BOT_OAUTH_SECRET)
 
 Options:
   -h, --help     show this help
@@ -190,6 +199,10 @@ export const check = async (env: NodeJS.ProcessEnv, { configPath, out = console.
     return false;
   }
   report(true, `the platform is ${s.platform === 'github' ? 'GitHub' : 'GitLab'}`, `from ${s.platformFrom}${s.platform === 'github' && !env[PLATFORM_URL] ? `; ${PLATFORM_URL} defaults to ${GITHUB_URL}` : ''}`);
+  if (env.CONTENT_BOT_ENGINE) {
+    const [command, ...args] = composeCommand(env.CONTENT_BOT_ENGINE as Engine);
+    await tryIt(`the container engine ${env.CONTENT_BOT_ENGINE} answers`, () => defaultExec(command!, [...args, 'version']), (said) => said.trim().split('\n')[0]!);
+  }
   for (const name of required(s.platform)) report(Boolean(env[name]), `${name} is set`);
   for (const name of removedVariables(env)) report(false, `${name} is not set`, `it has moved to ${CONFIG_FILE} (${REMOVED[name]})`);
   for (const name of renamedVariables(env)) report(false, `${name} is not set`, renamedMessage(name));
@@ -215,29 +228,37 @@ export const check = async (env: NodeJS.ProcessEnv, { configPath, out = console.
   return ok;
 };
 
-// What a site needs to run the bot, written once; an existing file is kept.
-export const init = (dir: string, { out = console.log }: { out?: (line: string) => void } = {}): { written: string[]; kept: string[] } => {
-  const files: [string, string, (text: string) => string][] = [
-    [CONFIG_FILE, 'content-bot.config.mjs', (text) => text],
-    ['tools/content-bot/Dockerfile', 'Dockerfile', (text) => text.replace('{{version}}', version())],
-    ['tools/content-bot/compose.yaml', 'compose.yaml', (text) => text],
-    ['tools/content-bot/.env.example', 'env.example', (text) => text],
-  ];
-  const written: string[] = [];
-  const kept: string[] = [];
-  for (const [target, source, fill] of files) {
-    const path = join(dir, target);
-    if (existsSync(path)) {
-      kept.push(target);
-      out(`kept     ${target}`);
-      continue;
-    }
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, fill(readFileSync(join(ASSETS, 'init', source), 'utf8')));
-    written.push(target);
-    out(`written  ${target}`);
+// The questions on the terminal: readline, the secrets not echoed.
+export const terminalAsk = (input: NodeJS.ReadStream = process.stdin, output: NodeJS.WriteStream = process.stdout): Ask => {
+  let muted = false;
+  const rl = createInterface({ input, output, terminal: true }) as ReturnType<typeof createInterface> & { _writeToOutput?: (text: string) => void };
+  const write = rl._writeToOutput!.bind(rl);
+  rl._writeToOutput = (text: string) => { if (!muted) write(text); };
+  const line = (prompt: string): Promise<string> => new Promise((resolvePromise) => rl.question(prompt, (answer) => resolvePromise(answer.trim())));
+  return {
+    async question(prompt, proposal) {
+      const answer = await line(prompt);
+      return answer || (proposal ?? '');
+    },
+    async secret(prompt) {
+      output.write(prompt);
+      muted = true;
+      try { return await line(''); } finally { muted = false; output.write('\n'); }
+    },
+    note(text) { output.write(`${text}\n`); },
+  };
+};
+
+// The wizard (wizard.ts): on a terminal with questions, or with --yes and the flags.
+export const init = async (dir: string, { yes = false, given = {}, env = process.env, ask, out = console.log }: { yes?: boolean; given?: Partial<Record<Flag, string>>; env?: NodeJS.ProcessEnv; ask?: Ask; out?: (line: string) => void } = {}): Promise<Awaited<ReturnType<typeof runWizard>>> => {
+  if (!ask && !yes && !process.stdin.isTTY) throw new Usage('init asks questions; run it in a terminal, or pass --yes with the flags (--help lists them).');
+  const asking = ask ?? (yes ? { question: async (prompt, proposal) => proposal ?? '', secret: async () => '', note: out } : terminalAsk());
+  try {
+    return await runWizard({ dir, ask: asking, yes, given, env, templates: join(ASSETS, 'init'), version: version(), askpass: askpass() });
+  } catch (error) {
+    if (error instanceof WizardError) throw new Usage(error.message);
+    throw error;
   }
-  return { written, kept };
 };
 
 export const main = async (argv: string[]): Promise<number> => {
@@ -251,6 +272,8 @@ export const main = async (argv: string[]): Promise<number> => {
         version: { type: 'boolean', short: 'v' },
         config: { type: 'string' },
         dir: { type: 'string' },
+        yes: { type: 'boolean' },
+        ...Object.fromEntries(FLAGS.map((flag) => [flag, { type: 'string' }])),
       },
     });
   } catch (error) {
@@ -269,9 +292,11 @@ export const main = async (argv: string[]): Promise<number> => {
         return -1;
       case 'check':
         return (await check(process.env, { configPath })) ? 0 : 1;
-      case 'init':
-        init(resolve(parsed.values.dir === undefined ? '.' : String(parsed.values.dir)));
+      case 'init': {
+        const given = Object.fromEntries(FLAGS.filter((flag) => parsed.values[flag] !== undefined).map((flag) => [flag, String(parsed.values[flag])])) as Partial<Record<Flag, string>>;
+        await init(resolve(parsed.values.dir === undefined ? '.' : String(parsed.values.dir)), { yes: Boolean(parsed.values.yes), given });
         return 0;
+      }
       case undefined:
         console.error(HELP);
         return 2;

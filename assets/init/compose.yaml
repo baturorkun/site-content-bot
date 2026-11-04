@@ -1,5 +1,6 @@
 # site-content-bot for this site. Settings come from a .env next to this file
-# on the host, never from the repository (.env.example lists them).
+# on the host, written by `site-content-bot init`, never from the repository.
+# The same .env gives CONTENT_BOT_HOST_PORT below (compose reads it from here).
 services:
   content-bot:
     build: .
@@ -8,7 +9,7 @@ services:
     restart: unless-stopped
     env_file: .env
     ports:
-      - "8290:8290"
+      - "${CONTENT_BOT_HOST_PORT:-8290}:8290"
     volumes:
       - content-bot-data:/data
 

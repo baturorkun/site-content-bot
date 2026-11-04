@@ -13,4 +13,6 @@ export { createApp, renderPage, PAGE_FILE, type AppOptions, type Login } from '.
 export { Site, type Context, type Production } from './site.js';
 export { onlyTextChanged, textless, checkSvgEdit } from './svg.js';
 export { versionPolicy, versionPolicies, nextVersion, requirementVersion, VERSION, type VersionPolicy, type RequirementVersion } from './version.js';
-export { serve, check, init, main } from './commands.js';
+export { serve, check, init, main, terminalAsk } from './commands.js';
+export { detect, defaultExec, detectRemote, parseRemote, detectEngine, composeCommand, packageManager, buildCommand, buildOutput, checksCommand, contentFiles, deployJobs, versionPolicyFor, layoutOf, probePlatform, GENERIC_RULE, ENGINES, type Engine, type Exec, type Findings, type Remote } from './detect.js';
+export { runWizard, verifyToken, readEnv, writeEnv, configSource, ignoreEnv, editableToLine, editableFromLine, WizardError, FLAGS, type Ask as WizardAsk, type Flag, type Settings, type WizardOptions, type WizardResult } from './wizard.js';

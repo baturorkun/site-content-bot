@@ -1,11 +1,11 @@
-// The command: --help, --version, init into an empty directory (the four files,
-// a second run keeps them), check with an empty environment (reports each
+// The command: --help, --version, init without a terminal (refused, or --yes
+// with the flags, the token verified before anything is written), check with an empty environment (reports each
 // missing variable, exits 1), serve with a removed or renamed variable set
 // (refuses, names the config field or the new name) and with a variable
 // missing; the platform from CONTENT_BOT_PLATFORM or the repository host.
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -35,31 +35,44 @@ test('--help exits 0; no command, an unknown command and an unknown option exit 
   assert.equal(cli(['--no-such-option']).status, 2);
 });
 
-test('init writes the config and the container files once, and keeps what is there', () => {
+test('init: without a terminal and without --yes it refuses; --yes names a missing flag; a token the platform refuses stops it before anything is written', () => {
   const site = join(work, 'site');
-  const first = cli(['init', '--dir', site]);
-  assert.equal(first.status, 0, first.stderr);
-  for (const file of ['content-bot.config.mjs', 'tools/content-bot/Dockerfile', 'tools/content-bot/compose.yaml', 'tools/content-bot/.env.example']) {
-    assert.ok(existsSync(join(site, file)), file);
-    assert.match(first.stdout, new RegExp(`written  ${file.replace(/[.]/g, '\\.')}`));
-  }
-  const dockerfile = readFileSync(join(site, 'tools/content-bot/Dockerfile'), 'utf8');
-  assert.match(dockerfile, new RegExp(`site-content-bot@${version.replace(/[.]/g, '\\.')}`), 'the Dockerfile installs this version');
+  mkdirSync(join(site, 'src/content'), { recursive: true });
+  execFileSync('git', ['init', '-q', '--initial-branch=main', site]);
+  execFileSync('git', ['remote', 'add', 'origin', 'https://gitlab.invalid/group/site.git'], { cwd: site });
+  writeFileSync(join(site, 'package.json'), JSON.stringify({ name: 'site', scripts: { build: 'make' } }));
+  writeFileSync(join(site, 'src/content/texts.json'), '{}');
+
+  const asked = cli(['init', '--dir', site]);
+  assert.equal(asked.status, 2);
+  assert.match(asked.stderr, /init asks questions; run it in a terminal, or pass --yes with the flags/);
+
+  const missing = cli(['init', '--dir', site, '--yes', '--test-url', 'https://test.example']);
+  assert.equal(missing.status, 2);
+  assert.match(missing.stderr, /--yes needs --production-url/);
+
+  const flags = ['--test-url', 'https://test.example', '--production-url', 'https://example.com', '--oauth-id', 'app', '--url', 'http://bot.example:8290'];
+  const refused = cli(['init', '--dir', site, '--yes', ...flags], { ...bare, CONTENT_BOT_OAUTH_SECRET: 's', CONTENT_BOT_TOKEN: 'glpat-x' });
+  assert.equal(refused.status, 2, refused.stderr);
+  assert.match(refused.stderr, /the token was refused: /);
+  for (const file of ['content-bot.config.mjs', 'tools/content-bot/.env', 'tools/content-bot/Dockerfile']) assert.ok(!existsSync(join(site, file)), `${file} is not written`);
+  assert.doesNotMatch(refused.stdout + refused.stderr, /glpat-x/, 'the token is never printed');
+
+  const help = cli(['--help']);
+  for (const flag of ['--yes', '--platform', '--platform-url', '--token', '--oauth-secret', '--port']) assert.match(help.stdout, new RegExp(flag.replace(/-/g, '\\-')), flag);
+});
+
+test('the init templates: the Dockerfile installs this version and copies nothing, compose publishes CONTENT_BOT_HOST_PORT', () => {
+  const dockerfile = readFileSync('assets/init/Dockerfile', 'utf8');
+  assert.match(dockerfile, /site-content-bot@\{\{version\}\}/);
   assert.match(dockerfile, /@anthropic-ai\/claude-code@/);
   assert.match(dockerfile, /CMD \["site-content-bot", "serve"\]/);
   assert.doesNotMatch(dockerfile, /COPY/, 'nothing of the site is copied; the clone is made at run time');
-  assert.match(readFileSync(join(site, 'tools/content-bot/compose.yaml'), 'utf8'), /env_file: \.env/);
-  const example = readFileSync(join(site, 'tools/content-bot/.env.example'), 'utf8');
-  for (const name of ['CONTENT_BOT_REPO_URL', 'CONTENT_BOT_PLATFORM', 'CONTENT_BOT_PLATFORM_URL', 'CONTENT_BOT_TOKEN', 'CONTENT_BOT_PROJECT', 'CONTENT_BOT_URL', 'CONTENT_BOT_OAUTH_ID', 'CONTENT_BOT_OAUTH_SECRET']) assert.match(example, new RegExp(`^${name}=$`, 'm'), name);
-  assert.doesNotMatch(example, /CONTENT_BOT_TEST_URL|CONTENT_BOT_BUILD|CONTENT_BOT_CHECKS|GITLAB_URL|CONTENT_BOT_GITLAB_/, 'the removed and renamed variables are not offered');
-  assert.match(readFileSync(join(site, 'content-bot.config.mjs'), 'utf8'), /deploy: \{ test: 'deploy_linux', production: 'deploy_release' \}/, 'the deploy jobs are in the example config');
-
-  writeFileSync(join(site, 'content-bot.config.mjs'), 'export default { mine: true };\n');
-  const second = cli(['init', '--dir', site]);
-  assert.equal(second.status, 0);
-  assert.equal(readFileSync(join(site, 'content-bot.config.mjs'), 'utf8'), 'export default { mine: true };\n', 'an existing file is left alone');
-  assert.equal((second.stdout.match(/^kept     /gm) ?? []).length, 4);
-  assert.doesNotMatch(second.stdout, /^written/m);
+  const compose = readFileSync('assets/init/compose.yaml', 'utf8');
+  assert.match(compose, /env_file: \.env/);
+  assert.match(compose, /"\$\{CONTENT_BOT_HOST_PORT:-8290\}:8290"/);
+  assert.ok(!existsSync('assets/init/env.example'), 'the wizard writes .env; there is no example to copy');
+  assert.match(readFileSync('assets/init/content-bot.config.mjs', 'utf8'), /deploy: \{ test: 'deploy_linux', production: 'deploy_release' \}/);
 });
 
 test('check with an empty environment reports each missing variable and exits 1; a removed variable is a failure that names its field, a renamed one its new name', () => {
