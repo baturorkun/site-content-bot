@@ -1,6 +1,6 @@
 ---
 id: RQ-0007
-status: ready
+status: completed
 executionMode: handoff
 pipelineFast: false
 createdByName: "Batur Orkun"
@@ -8,6 +8,9 @@ createdByEmail: "batur@bc.int"
 createdAt: "2026-11-10T10:43:02.125Z"
 branch: "factory/RQ-0007"
 createdFromCommit: "235c3a0d46f28cb0c698051981d4f8226ed1b62b"
+completedRunId: "20261110104524-RQ-0007"
+completedBy: "human"
+completedAt: "2026-11-10T10:56:44.331Z"
 githubPullRequestUrl: "https://github.com/baturorkun/site-content-bot/pull/14"
 githubPullRequestIid: 14
 githubIssueUrl: "https://github.com/baturorkun/site-content-bot/issues/13"
