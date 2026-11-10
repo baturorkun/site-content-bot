@@ -45,6 +45,7 @@ export interface Settings {
 export class WizardError extends Error {}
 
 const ENV_FILE = 'tools/content-bot/.env';
+const OVERRIDE = 'tools/content-bot/compose.override.yaml';
 const OPTIONAL: Partial<Record<keyof Settings, string>> = { CONTENT_BOT_MIN_ACCESS: '30', CONTENT_BOT_HOST_PORT: '8290', CONTENT_BOT_CONTAINER: 'site-content-bot', CONTENT_BOT_PLATFORM_URL: '', CONTENT_BOT_PLATFORM: '', CONTENT_BOT_ENGINE: '' };
 
 // KEY=VALUE lines of a .env (quotes around the value dropped, comments skipped).
@@ -105,14 +106,18 @@ export const configSource = (config: Config): string => {
   return `// content-bot.config.mjs: how this site describes itself to site-content-bot (written by\n// \`site-content-bot init\`; the fields are explained in the package's README). Read once, when the\n// bot starts: a change here takes effect on its restart.\nexport default ${JSON.stringify(plain, null, 2).replace(/"([a-zA-Z_]\w*)":/g, '$1:')};\n`;
 };
 
-// tools/content-bot/.env in .gitignore.
-export const ignoreEnv = (dir: string): boolean => {
+// tools/content-bot/.env and the host's compose.override.yaml in .gitignore; the names it added.
+export const ignoreEnv = (dir: string): string[] => {
   const file = join(dir, '.gitignore');
-  const lines = existsSync(file) ? readFileSync(file, 'utf8').split('\n') : [];
-  if (lines.some((line) => ['tools/content-bot/.env', '/tools/content-bot/.env', '.env', '**/.env', '*.env'].includes(line.trim()))) return false;
-  const text = lines.join('\n');
-  writeFileSync(file, `${text}${text && !text.endsWith('\n') ? '\n' : ''}# site-content-bot: the bot's settings and secrets stay on the host\n${ENV_FILE}\n`);
-  return true;
+  const lines = existsSync(file) ? readFileSync(file, 'utf8').split('\n').map((line) => line.trim()) : [];
+  const missing = [
+    [ENV_FILE, [ENV_FILE, `/${ENV_FILE}`, '.env', '**/.env', '*.env']],
+    [OVERRIDE, [OVERRIDE, `/${OVERRIDE}`, 'compose.override.yaml', '**/compose.override.yaml']],
+  ].filter(([, covered]) => !lines.some((line) => (covered as string[]).includes(line))).map(([name]) => name as string);
+  if (!missing.length) return [];
+  const text = existsSync(file) ? readFileSync(file, 'utf8') : '';
+  writeFileSync(file, `${text}${text && !text.endsWith('\n') ? '\n' : ''}# site-content-bot: the bot's settings and secrets stay on the host\n${missing.join('\n')}\n`);
+  return missing;
 };
 
 // "path:kind, glob:kind" <-> entries, for the one-line question.
@@ -369,7 +374,8 @@ export const runWizard = async (options: WizardOptions): Promise<WizardResult> =
   if (existsSync(join(dir, 'tools/content-bot/Dockerfile'))) warnings.push('tools/content-bot/Dockerfile is no longer used (the container runs the published image); delete it');
   writeEnv(envFile, settings);
   written.push(ENV_FILE);
-  if (ignoreEnv(dir)) written.push('.gitignore (+ tools/content-bot/.env)');
+  const ignored = ignoreEnv(dir);
+  if (ignored.length) written.push(`.gitignore (+ ${ignored.join(', ')})`);
 
   // 10. The summary.
   ask.note('');

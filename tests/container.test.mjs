@@ -64,6 +64,21 @@ test('start: compose up in tools/content-bot, healthy, checked, the address; eac
   assert.equal(out.at(-1), 'The bot is at http://bot.example:8290');
 });
 
+test('compose.override.yaml beside compose.yaml: every compose call names it; without it, compose.yaml alone', async () => {
+  const dir = site();
+  writeFileSync(join(dir, 'tools/content-bot/compose.override.yaml'), 'services:\n  content-bot:\n    extra_hosts:\n      - "git.example:10.0.0.5"\n');
+  const fake = engine();
+  const { io: options } = io(fake);
+  const at = await readSite(dir, fake.run);
+  assert.equal(await start(at, options), 0);
+  assert.equal(fake.lines()[0], 'docker compose -f compose.yaml -f compose.override.yaml up -d');
+  await stop(at, options);
+  assert.equal(fake.lines().at(-1), 'docker compose -f compose.yaml -f compose.override.yaml down');
+  rmSync(join(dir, 'tools/content-bot/compose.override.yaml'));
+  await stop(at, options);
+  assert.equal(fake.lines().at(-1), 'docker compose -f compose.yaml down');
+});
+
 test('start: not logged in, without a terminal: the login command and exit 1; at a terminal: the login, interactively, and the check again', async () => {
   const fake = engine({ checks: [NOT_LOGGED_IN] });
   const without = io(fake);
