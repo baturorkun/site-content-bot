@@ -51,7 +51,7 @@ const verify = async (input) => { verified.push(input); return ['the project ans
 test('the wizard on a pnpm site: GitHub proposed, the config from the repository, .env with every setting at 0600, .gitignore, the summary', async () => {
   const script = scripted({ 'test domain serves': 'https://test.example.com', 'production serves': 'https://www.example.com', 'Client ID': 'app-id' }, { secrets: { 'Its secret': 'app-secret', 'The token': 'ghp_token' } });
   const result = await runWizard({ dir: site, ask: script.ask, exec, templates, version: '0.3.0', verify });
-  assert.deepEqual(result.written, ['content-bot.config.mjs', 'tools/content-bot/compose.yaml', 'tools/content-bot/.env', '.gitignore (+ tools/content-bot/.env)'], 'no Dockerfile: the container runs the published image');
+  assert.deepEqual(result.written, ['content-bot.config.mjs', 'tools/content-bot/compose.yaml', 'tools/content-bot/.env', '.gitignore (+ tools/content-bot/.env, tools/content-bot/compose.override.yaml)'], 'no Dockerfile: the container runs the published image');
   assert.equal(existsSync(join(site, 'tools/content-bot/Dockerfile')), false);
   assert.deepEqual(result.kept, []);
   assert.equal(result.engine, 'docker');
@@ -93,7 +93,7 @@ test('the wizard on a pnpm site: GitHub proposed, the config from the repository
   assert.match(readFileSync(envFile, 'utf8'), /^#CONTENT_BOT_MIN_ACCESS=30$/m);
   assert.equal(env.CONTENT_BOT_PLATFORM_URL, undefined, 'github.com: empty, a comment');
   assert.match(readFileSync(envFile, 'utf8'), /^#CONTENT_BOT_PLATFORM_URL=$/m);
-  assert.match(readFileSync(join(site, '.gitignore'), 'utf8'), /\ntools\/content-bot\/\.env\n$/);
+  assert.match(readFileSync(join(site, '.gitignore'), 'utf8'), /\ntools\/content-bot\/\.env\ntools\/content-bot\/compose\.override\.yaml\n$/, 'the host\'s files, once');
   assert.match(readFileSync(join(site, 'tools/content-bot/compose.yaml'), 'utf8'), /image: \$\{CONTENT_BOT_IMAGE:-ghcr\.io\/baturorkun\/site-content-bot:0\.3\.0\}/, 'the image of this version');
   assert.match(readFileSync(join(site, 'tools/content-bot/compose.yaml'), 'utf8'), /\$\{CONTENT_BOT_HOST_PORT:-8290\}:8290/);
 

@@ -119,6 +119,18 @@ settings, *Change visibility*). A site that needs more for its build or
 checks (Python, a browser) builds its own image `FROM` this one and names it
 in `CONTENT_BOT_IMAGE` in `.env`.
 
+**This host's own settings** go in `tools/content-bot/compose.override.yaml`
+beside `compose.yaml`: what only this host needs, never committed (`init` puts it
+in `.gitignore` with `.env`). Every command passes it to compose when it is
+there. For example, a name containers on this host do not resolve:
+
+```yaml
+services:
+  content-bot:
+    extra_hosts:
+      - "gitlab.example.internal:10.0.0.5"
+```
+
 **Two sites on one host**: give each its own `CONTENT_BOT_CONTAINER` (the
 container's name and its compose project, so its own volume) and its own host
 port; `init` asks both.

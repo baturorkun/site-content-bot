@@ -85,9 +85,14 @@ const step = async (io: Io, site: SiteContainer, command: string, args: string[]
   return (io.run ?? defaultRunner)(command, args, { cwd, interactive });
 };
 
+// This host's own settings for the container (extra_hosts, a proxy, …), never committed: compose reads it
+// only when named, as -f compose.yaml turns its own lookup off.
+export const OVERRIDE_FILE = 'compose.override.yaml';
+
 const compose = (io: Io, site: SiteContainer, args: string[], options: { interactive?: boolean } = {}): Promise<RunResult> => {
   const [command, ...rest] = composeCommand(site.engine);
-  return step(io, site, command!, [...rest, '-f', 'compose.yaml', ...args], options);
+  const files = ['-f', 'compose.yaml', ...(existsSync(join(site.tools, OVERRIDE_FILE)) ? ['-f', OVERRIDE_FILE] : [])];
+  return step(io, site, command!, [...rest, ...files, ...args], options);
 };
 
 const must = (result: RunResult, what: string): void => {

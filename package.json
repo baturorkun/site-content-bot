@@ -1,6 +1,6 @@
 {
   "name": "site-content-bot",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "A chat that reads a website's repository and changes its texts: proposed edits, Apply pushes to main, Release ships to production.",
   "keywords": [
     "website",
